@@ -651,6 +651,16 @@ function sys_getrlimit(proc) {
 	return 0;
 }
 
+function sys_prlimit64(proc) {
+	var pid = proc.registers[4];
+	var resource = proc.registers[5];
+	var new_limit = proc.registers[6];
+	var old_limit = proc.registers[7];
+
+	// FIXME
+	return 0;
+}
+
 function sys_gettimeofday(proc) {
 	// TODO
 	var tv = proc.registers[4];
@@ -1155,7 +1165,7 @@ var syscalls = {
 // 4335: sys_recvmmsg,
 // 4336: sys_fanotify_init,
 // 4337: sys_fanotify_mark,
-// 4338: sys_prlimit64,
+4338: sys_prlimit64,
 // 4339: sys_name_to_handle_at,
 // 4340: sys_open_by_handle_at,
 // 4341: sys_clock_adjtime,
