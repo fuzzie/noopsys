@@ -1,0 +1,29 @@
+<html>
+<script src="noopsys.js"></script>
+<script src="term.js"></script>
+
+<body>
+<p>moop</p>
+</body>
+<script type="text/javascript">
+//window.onload = function() {
+  var term = new Terminal({
+    cols: 80,
+    rows: 25,
+    useStyle: true,
+    convertEol: true
+  });
+
+  term.on('data', function(data) {
+  });
+
+  term.on('title', function(title) {
+    document.title = title;
+  });
+
+  term.open(document.body);
+
+  goEmulatorGo(term);
+//};
+</script>
+</html>

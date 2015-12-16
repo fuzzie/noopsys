@@ -1,0 +1,87 @@
+/* all this is GPLv2+ */
+
+// error codes
+var EPERM = 1;
+var ENOENT = 2;
+var ESRCH = 3;
+var EINTR = 4;
+var EIO = 5;
+var ENXIO = 6;
+var E2BIG = 7;
+var ENOEXEC = 8;
+var EBADF = 9;
+var ECHILD = 10;
+var EAGAIN = 11;
+var ENOMEM = 12;
+var EACCES = 13;
+var EFAULT = 14;
+var ENOTBLK = 15;
+var EBUSY = 16;
+var EEXIST = 17;
+var EXDEV = 18;
+var ENODEV = 19;
+var ENOTDIR = 20;
+var EISDIR = 21;
+var EINVAL = 22;
+var ENFILE = 23;
+var EMFILE = 24;
+var ENOTTY = 25;
+var ETXTBSY = 26;
+var EFBIG = 27;
+var ENOSPC = 28;
+var ESPIPE = 29;
+var EROFS = 30;
+var EMLINK = 31;
+var EPIPE = 32;
+var EDOM = 33;
+var ERANGE = 34;
+
+// clone flags
+var CLONE_PARENT_SETTID = 0x00100000;
+var CLONE_CHILD_CLEARTID = 0x00200000;
+var CLONE_CHILD_SETTID = 0x01000000;
+
+var S_IFLNK = 0xa000;
+var S_IFREG = 0x8000;
+var S_IFDIR = 0x4000;
+
+// mips poll values
+var POLLIN = 0x1;
+var POLLPRI = 0x2;
+var POLLOUT = 0x4;
+var POLLERR = 0x8;
+var POLLHUP = 0x10;
+var POLLNVAL = 0x20;
+var POLLRDNORM = 0x40;
+var POLLRDBAND = 0x80;
+var POLLWRNORM = POLLOUT;
+var POLLWRBAND = 0x100;
+var POLLMSG = 0x400;
+var POLLREMOVE = 0x1000;
+var POLLRDHUP = 0x2000;
+
+// wait
+var WNOHANG = 0x1;
+
+// ELF
+var ET_EXEC = 2;
+var ET_DYN = 3;
+
+var SEEK_SET = 0;
+var SEEK_CUR = 1;
+var SEEK_END = 2;
+
+// mmap (mips)
+var MAP_SHARED = 1;
+var MAP_PRIVATE = 2;
+var MAP_FIXED = 0x10;
+var MAP_NORESERVE = 0x400;
+var MAP_ANONYMOUS = 0x800;
+var MAP_GROWSDOWN = 0x1000;
+var MAP_DENYWRITE = 0x2000;
+var MAP_EXECUTABLE = 0x4000;
+var MAP_LOCKED = 0x8000;
+var MAP_POPULATE = 0x10000;
+var MAP_NONBLOCK = 0x20000;
+var MAP_STACK = 0x40000;
+var MAP_HUGETLB = 0x80000;
