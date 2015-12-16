@@ -72,6 +72,10 @@ if (typeof window == 'undefined') {
 
 	this.cwd = "/";
 
+	// Attempt at optimisation.
+	this.optOldPage = 0xfffffff >>> 0;
+	this.optOldAddr = 0xfffffff >>> 0;
+
 	this.cloneFrom = function(source) {
 		// Caller is responsible for setting pid/ppid.
 		this.pc = source.pc;
@@ -117,10 +121,18 @@ if (typeof window == 'undefined') {
 
 	this.read32 = function(addr) {
 		// FIXME 
-		var v = this.mem8[this.translate(addr)];
-		v += this.mem8[this.translate(addr + 1)] << 8;
-		v += this.mem8[this.translate(addr + 2)] << 16;
-		v += this.mem8[this.translate(addr + 3)] << 24;
+		var mapped = this.translate(addr);
+		var v = this.mem8[mapped];
+		if ((addr & 0x03) == 0x0) {
+			// TODO: We could also just use mem32...
+			v += this.mem8[mapped + 1] << 8;
+			v += this.mem8[mapped + 2] << 16;
+			v += this.mem8[mapped + 3] << 24;
+		} else {
+			v += this.mem8[this.translate(addr + 1)] << 8;
+			v += this.mem8[this.translate(addr + 2)] << 16;
+			v += this.mem8[this.translate(addr + 3)] << 24;
+		}
 		if (debug) console.log("read " + addr.toString(16) + " (" + v.toString(16) + ")");
 		return v;
 	}
@@ -386,7 +398,17 @@ if (typeof window == 'undefined') {
 	}
 
 	this.runOneInst = function() {
-		var myInst = this.mem32[this.translate(this.pc) >>> 2];
+		// If this.optOldAddr contains the higher bits of PC, we're still using the same page.
+		// In this case, we can use a heap address directly and avoid a call to translate.
+		// XXX: This doesn't account for page table changing from under us, etc.
+		var pcaddr = this.optOldPage + (this.pc & 0xffff);
+		if ((this.pc >>> 16) != this.optOldAddr) {
+			pcaddr = this.translate(this.pc);
+			this.optOldPage = pcaddr & 0xffff0000;
+			this.optOldAddr = this.pc >>> 16;
+		}
+
+		var myInst = this.mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;
 		var subOpcodeR = (myInst >>> 16) & 0x1f; // regimm
