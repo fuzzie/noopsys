@@ -368,6 +368,11 @@ function sys_pipe(proc) {
 	return infd;
 }
 
+function sys_unlink(proc) {
+	// TODO
+	return 0;
+}
+
 function sys_open(proc) {
 	// FIXME
 	var filename = proc.stringFromUser(proc.registers[4]);
@@ -837,7 +842,7 @@ var syscalls = {
 4007: sys_waitpid,
 // 4008: sys_creat,
 // 4009: sys_link,
-// 4010: sys_unlink,
+4010: sys_unlink,
 4011: sys_execve,
 4012: sys_chdir,
 4013: sys_time,
