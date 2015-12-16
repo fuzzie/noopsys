@@ -378,10 +378,35 @@ function sys_open(proc) {
 	var filename = proc.stringFromUser(proc.registers[4]);
 	var flags = proc.registers[5];
 	var mode = proc.registers[6];
+
 	//console.log("open: " + filename);
-	var node = getNodeForPath(filename, proc);
+
+	var stopOnLinks = (flags & O_NOFOLLOW) == O_NOFOLLOW; // TODO: fix return value
+	var node = getNodeForPath(filename, proc, stopOnLinks);
+
+	if (((flags & (O_EXCL|O_CREAT)) == (O_EXCL|O_CREAT)) && (typeof node != 'number'))
+		return -EEXIST;
+
+	if ((node == -ENOENT) && (flags & O_CREAT)) {
+		var path = filename.split("/");
+		var basename = path.pop();
+		var pathname = path.join("/");
+		// XXX: do this properly (this is bad for various reasons)
+		var parentnode = getNodeForPath(pathname, proc, stopOnLinks);
+		//console.log("creating " + basename + " in " + pathname);
+		if (typeof parentnode == 'number')
+			return -ENOENT; // TODO: right?
+		node = new memFSNode("", parentnode);
+		node.mode = mode;
+		parentnode.getChildren()[basename] = node;
+	}
 	if (typeof node == 'number')
 		return node;
+
+	// XXX: ugh
+	if (flags & O_TRUNC)
+		node.data = "";
+
 	proc.fds.push(new memFSBackedFile(node));
 	var fd = proc.fds.length-1;
 	return fd;

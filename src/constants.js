@@ -85,3 +85,27 @@ var MAP_POPULATE = 0x10000;
 var MAP_NONBLOCK = 0x20000;
 var MAP_STACK = 0x40000;
 var MAP_HUGETLB = 0x80000;
+
+// fcntl (mips)
+var O_APPEND = 8;
+var O_DSYNC = 0x10;
+var O_NONBLOCK = 0x80;
+var O_CREAT = 0x100;
+var O_TRUNC = 0x200;
+var O_EXCL = 0x400;
+var O_NOCTTY = 0x800;
+var FASYNC = 0x1000;
+var O_LARGEFILE = 0x2000;
+var __O_SYNC = 0x4000;
+var O_SYNC = O_SYNC | O_DSYNC;
+var O_DIRECT = 0x8000;
+var O_DIRECTORY = 0x10000;
+var O_NOFOLLOW = 0x20000;
+var O_NOATIME = 0x40000;
+var O_CLOEXEC = 0x80000;
+var O_PATH = 0x200000;
+var __O_TMPFILE = 0x400000;
+// "a horrid kludge trying to make sure that this will fail on old kernels"
+// TODO: do we need this?
+var O_TMPFILE = (__O_TMPFILE | O_DIRECTORY);
+var O_TMPFILE_MASK = (__O_TMPFILE | O_DIRECTORY | O_CREAT);

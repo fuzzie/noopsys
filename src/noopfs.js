@@ -219,6 +219,10 @@ memFSBackedFile.prototype.read = function(process, size) {
 	return len;
 }
 
+memFSBackedFile.prototype.write = function() {
+	throw Error("no writing yet");
+}
+
 memFSBackedFile.prototype.clone = function() {
 	// TODO: think about this
 
