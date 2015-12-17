@@ -1,8 +1,13 @@
 function sys_brk(proc) {
+	// XXX: this is all just a hack
 	if (proc.registers[4] == 0)
 		return proc.brk;
-	else
-		return proc.registers[4]; // XXX
+	var newbrk = proc.registers[4];
+	// XXX: hardcoded
+	if (newbrk < 0x8000000 || newbrk >= 0x9000000)
+		return proc.brk;
+	proc.brk = newbrk;
+	return proc.brk;
 }
 
 function sys_set_thread_area(proc) {
