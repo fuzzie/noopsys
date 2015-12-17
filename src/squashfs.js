@@ -95,6 +95,7 @@ function SquashFSSymlinkInode(sfs) {
 
 	this.nlink = sfs.read32();
 	var size = sfs.read32(); // XXX: correct?
+	this.size = size;
 	this.data = sfs.readString(size);
 }
 
