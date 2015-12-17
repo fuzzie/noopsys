@@ -38,6 +38,11 @@ function sys_getpgrp(proc) {
 	return 0;
 }
 
+function sys_setsid(proc) {
+	// FIXME
+	return proc.pid;
+}
+
 function sys_geteuid(proc) {
 	return proc.euid;
 }
@@ -657,6 +662,12 @@ function sys_waitpid(proc) {
 	return 0; // either we're blocking, or we got WNOHANG with children
 }
 
+function sys_wait4(proc) {
+	// FIXME: fourth rusage param!
+
+	return sys_waitpid(proc);
+}
+
 function sys_exit(proc) {
 	// exit() for a single thread.
 	proc.exitCode = proc.registers[4];
@@ -907,6 +918,37 @@ function sys_execve(proc) {
 	return 0;
 }
 
+function sys_reboot(proc) {
+	var magic = proc.registers[4];
+	var magic2 = proc.registers[5];
+	var cmd = proc.registers[6];
+	var arg = proc.registers[7];
+
+	if (magic != 0xfee1dead)
+		return -EINVAL;
+	// We don't bother checking magic2.
+
+	switch (cmd) {
+	case 0xcdef0123:
+		// FIXME
+		printk("System halted.");
+		break;
+	case 0x4321fedc:
+		// FIXME
+		printk("Power down.");
+		break;
+	case 0:
+		// TODO: disable CAD
+		break;
+	default:
+		// FIXME: there are other calls
+		return -EINVAL;
+	}
+
+	// TODO: We don't bother at all.
+	return 0;
+}
+
 var syscalls = {
 // 4000: sys_syscall,
 4001: sys_exit,
@@ -974,7 +1016,7 @@ var syscalls = {
 4063: sys_dup2,
 4064: sys_getppid,
 4065: sys_getpgrp,
-// 4066: sys_setsid,
+4066: sys_setsid,
 // 4067: sys_sigaction,
 // 4068: sys_sgetmask,
 // 4069: sys_ssetmask,
@@ -996,7 +1038,7 @@ var syscalls = {
 4085: sys_readlink,
 // 4086: sys_uselib,
 // 4087: sys_swapon,
-// 4088: sys_reboot,
+4088: sys_reboot,
 // 4089: sys_readdir, /* sys_old_readdir */
 4090: sys_mmap, /* mips_mmap */
 4091: sys_munmap,
@@ -1022,7 +1064,7 @@ var syscalls = {
 // 4111: sys_vhangup,
 // 4112: sys_idle, /* not implemented */
 // 4113: sys_vm86, /* not implemented */
-// 4114: sys_wait4,
+4114: sys_wait4,
 // 4115: sys_swapoff,
 // 4116: sys_sysinfo,
 // 4117: sys_ipc,
