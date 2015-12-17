@@ -410,13 +410,15 @@ function sys_open(proc) {
 		var path = filename.split("/");
 		var basename = path.pop();
 		var pathname = path.join("/");
+		if (pathname == "")
+			pathname = "./";
 		// XXX: do this properly (this is bad for various reasons)
 		var parentnode = getNodeForPath(pathname, proc, stopOnLinks);
 		//console.log("creating " + basename + " in " + pathname);
 		if (typeof parentnode == 'number')
 			return -ENOENT; // TODO: right?
-		node = new memFSNode("", parentnode);
-		node.mode = mode;
+		node = new memFSNode(null, parentnode);
+		node.mode = mode | S_IFREG;
 		parentnode.getChildren()[basename] = node;
 	}
 	if (typeof node == 'number')
