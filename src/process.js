@@ -454,15 +454,15 @@ if (typeof window == 'undefined') {
 				break;
 			case 3: // sra
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] >> 0) >> (sa >> 0);
+				this.registers[rd] = (this.registers[rt] >> 0) >> sa;
 				break;
 			case 4: // sllv
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] << this.registers[rs];
+				this.registers[rd] = this.registers[rt] << (this.registers[rs] & 0x1f);
 				break;
 			case 6: // srlv
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] >> this.registers[rs];
+				this.registers[rd] = this.registers[rt] >>> (this.registers[rs] & 0x1f);
 				break;
 			case 7: // srav
 				if (rd == 0) break;
@@ -502,15 +502,26 @@ if (typeof window == 'undefined') {
 				throw Error(); // FIXME
 				break;
 			case 24: // mult
-				// FIXME: this is so wrong (also multResult should be always in the obj..)
-				//console.log("mult " + this.registers[rs] + " " + this.registers[rt]);
-				/*var result = (this.registers[rt] >> 0) * (this.registers[rs] >> 0);
-				this.resultLow = (result & 0xffffffff) >>> 0;
-				this.resultHigh = result >>> 32;
-				break;*/
+				// From Hacker's Delight, in an attempt to make this work.
+				// (This seems correct now.)
+				var u1 = (this.registers[rt] & 0xffff) >>> 0;
+				var v1 = (this.registers[rs] & 0xffff) >>> 0;
+				var u0 = (this.registers[rt] >> 16);
+				var v0 = (this.registers[rs] >> 16);
+				var t = (((u1 * v1) >>> 0) & 0xffffffff) >>> 0;
+				var w3 = (t & 0xffff) >>> 0;
+				var k = t >>> 16;
+				t = (((u0*v1 + k) >>> 0) & 0xffffffff) >>> 0;
+				var w2 = (t & 0xffff) >>> 0;
+				var w1 = (t >> 16) >>> 0;
+				var t = (((u1*v0 + w2) >>> 0) & 0xffffffff) >>> 0;
+				k = (t >> 16) >>> 0;
+				//this.resultLow = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
+				this.resultLow = (((this.registers[rt] >> 0) * (this.registers[rs] >> 0)) & 0xffffffff) >>> 0;
+				this.resultHigh = (((u0*v0 + w1 + k) >>> 0) & 0xffffffff) >>> 0;
+				//console.log("assert " + (this.registers[rs] >> 0) + " * " + (this.registers[rt] >> 0) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8)); // note you have to postprocess this for negative numbers :p
+				break;
 			case 25: // multu
-				// FIXME: this is so wrong (also multResult should be always in the obj..)
-				//console.log("multu " + this.registers[rs] + " " + this.registers[rt]);
 				var tl = this.registers[rt] & 0xffff;
 				var sl = this.registers[rs] & 0xffff;
 				var th = (this.registers[rt] >>> 16) & 0xffff;
@@ -518,10 +529,11 @@ if (typeof window == 'undefined') {
 				var low = tl * sl;
 				var mid = (th * sl) + (sh * tl);
 				var tmp = mid + (low >>> 16);
-				this.resultLow = ((mid << 16) + low) >>> 0;
+				this.resultLow = ((((mid << 16) + low) >>> 0) & 0xffffffff) >>> 0;
 				this.resultHigh = (th * sh) + (tmp >>> 16);
 				if (tmp > 0xffffffff) this.resultHigh += 0x10000;
-				this.resultHigh = this.resultHigh >>> 0;
+				this.resultHigh = (this.resultHigh >>> 0) & 0xffffffff;
+				//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
 				break;
 			case 26: // div
 				throw Error(); // FIXME
@@ -529,8 +541,12 @@ if (typeof window == 'undefined') {
 			case 27: // divu
 				if (this.registers[rt] == 0)
 					break; // undefined
-				this.resultLow = this.registers[rs] / this.registers[rt];
-				this.resultHigh = this.registers[rs] % this.registers[rt];
+				this.resultLow = (this.registers[rs] / this.registers[rt]) >>> 0;
+				this.resultHigh = (this.registers[rs] % this.registers[rt]) >>> 0;
+				//console.log("assert (" + this.registers[rs] + " / " + this.registers[rt] + ")== " + this.resultLow);
+				//console.log("assert (" + this.registers[rs] + " % " + this.registers[rt] + ")== " + this.resultHigh);
+				// Javascript's modulo is weird, might need to use the following for div?
+				// this.resultHigh = ((this.registers[rs] % this.registers[rt]) + this.registers[rt]) % this.registers[rt];
 				break;
 			case 32: // add
 				throw Error(); // FIXME
@@ -628,8 +644,13 @@ if (typeof window == 'undefined') {
 				if ((this.registers[rs] >> 0) >= 0)
 					this.pendingBranch = this.pc + (simm << 2);
 				break;
+			case 2: // bltzl
+				throw Error(); // FIXME
+				break;
+			case 3: // bgezl
+				throw Error(); // FIXME
+				break;
 			case 16: // bltzal
-				// TODO: check
 				this.registers[31] = this.pc + 4;
 				if ((this.registers[rs] >> 0) < 0) {
 					this.pendingBranch = this.pc + (simm << 2);
@@ -642,20 +663,22 @@ if (typeof window == 'undefined') {
 					if (showCalls) console.log(this.pc.toString(16) + " --> call " + this.pendingBranch.toString(16));
 				}
 				break;
+			case 18: // bltzall
+				throw Error(); // FIXME
+				break;
+			case 19: // bgezall
+				throw Error(); // FIXME
+				break;
 			default:
 				throw new Error("bad regimm instruction " + regimm);
 			}
 			break;
 		case 2: // j
 			var target = myInst & 0x3ffffff;
-			//if (target & 0x2000000)
-			//	target = -(0x4000000 - target);
 			this.pendingBranch = (this.pc & 0xf0000000) | (target << 2);
 			break;
 		case 3: // jal
 			var target = myInst & 0x3ffffff;
-			//if (target & 0x2000000)
-			//	target = -(0x4000000 - target);
 			this.pendingBranch = (this.pc & 0xf0000000) | (target << 2);
 			this.registers[31] = this.pc + 4;
 			if (debug) console.log("--> call " + this.pendingBranch.toString(16));
@@ -842,7 +865,7 @@ if (typeof window == 'undefined') {
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			// We have the least-significant bits and we want to make them the most-significant ones.
-			var value = (this.registers[rt] << (mask * 8));
+			var value = (this.registers[rt] << (mask * 8)) >>> 0;
 			if (mask != 0) // agh js
 				mask = 0xffffffff >>> ((4 - mask) * 8);
 			value = (this.read32(addr >>> 0) & mask) | value;
@@ -865,10 +888,18 @@ if (typeof window == 'undefined') {
 			// Everything is atomic in our world.
 			this.registers[rt] = 1;
 			break;
+		case 61: // sdc1
+			// rs is base
+			// rt is ft (the high word comes from ft+1)
+			// simm is offset
+			if (rt >= 20 && rt <= 30)
+				break; // these are used by code saving fp registers
+			throw Error("sdc1 with register " + rt);
+			break;
 		default:
 			// coprocessor is 0100zz, i.e. 16 t/m 31
 			if (opcode >= 16 && opcode < 31 || opcode == 53 || opcode == 54 || opcode == 55 || opcode == 61 || opcode == 62 || opcode == 63) {
-				if (debug) console.log("ignoring coproc opcode " + opcode);
+				throw Error("unsupported coproc opcode " + opcode);
 				break;
 			}
 			throw new Error("bad instruction, opcode " + opcode);
