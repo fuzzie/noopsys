@@ -872,14 +872,36 @@ function sys_execve(proc) {
 		envp += 4;
 	}
 
+	// Is it a shell script?
+	// XXX: memfs only, hacky
+	var buffer = new Uint8Array(node.data);
+	if (buffer[0] == 0x23 && buffer[1] == 0x21) { // #!
+		var b = 2;
+		while (b < buffer.length && (buffer[b] == 0x20 || buffer[b] == 0x9)) // space or tab
+			b++;
+		var interpreter = "";
+		while (b < buffer.length && buffer[b] != 0xa && buffer[b] != 0x20 && buffer[b] != 0x9)
+			interpreter = interpreter + String.fromCharCode(buffer[b++]);
+		while (b < buffer.length && (buffer[b] == 0x20 || buffer[b] == 0x9)) // space or tab
+			b++;
+		// FIXME: arguments!!!
+		argv_copy[0] = interpreter;
+		argv_copy.splice(1, 0, filename);
+
+		node = getNodeForPath(interpreter, proc);
+		// TODO: manpage says errors are a bit different
+		if (typeof node == 'number')
+			return node;
+	}
+
 	// TODO: reset signals
 	// TODO: close close-on-exec fds
 	// TODO: other stuff
 	proc.initMemory();
 
 	// FIXME
-	var buffer = node.data; // XXX: memfs only
-	proc.loadElf(buffer, argv_copy, envp_copy);
+	var execBuffer = node.data; // XXX: memfs only
+	proc.loadElf(execBuffer, argv_copy, envp_copy);
 
 	// Return value is irrelevant.
 	return 0;
