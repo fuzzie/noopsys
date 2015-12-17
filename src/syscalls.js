@@ -122,23 +122,25 @@ function sys_mmap_core(proc, ispgoffset) {
 	if (ispgoffset)
 		offset = offset * 4096; // We don't care about large files.
 
-	if (!proc.fds[fd]) {
-		return -EBADF;
+	if (!len)
+		return -EINVAL;
+
+	var file = null;
+
+	if (!(flags & MAP_ANONYMOUS)) {
+		if (!proc.fds[fd]) {
+			return -EBADF;
+		}
+		file = proc.fds[fd];
+		if (!file.node)
+			return -EACCES;
 	}
-	var file = proc.fds[fd];
-	if (!file.node)
-		return -EACCES;
 
 	var isPrivate = (flags & MAP_PRIVATE) == MAP_PRIVATE;
 	var isShared = (flags & MAP_SHARED) == MAP_SHARED;
 
-	if (flags & MAP_ANONYMOUS) {
-		console.log("anon");
-		return -ENODEV; // go away
-	}
-
 	// FIXME: the rest
-	//console.log("mmap: map fd " + fd + " at " + addr.toString(16) + " (" + len + " bytes)");
+	// console.log("mmap (" + proc.pid + "): map fd " + fd + " at " + addr.toString(16) + " (" + len + " bytes)");
 
 	var pages = ((len + 0xffff) / 0x10000) >>> 0;
 
@@ -150,10 +152,12 @@ function sys_mmap_core(proc, ispgoffset) {
 		//	throw Error("mmap with non-zero addr"); // TODO
 		start = addr;
 	}
+	//console.log("mmap: decided to allocate at " + start.toString(16));
 	// TODO: ugh
 	// We try to leave a gap between mappings to make debugging easier.
-	if (start + 0x10000*(pages+2) > proc.mmapHackStart)
-		proc.mmapHackStart = start + 0x10000*(pages + 2);
+	var gap = 5;
+	if (start + 0x10000*(pages + gap) > proc.mmapHackStart)
+		proc.mmapHackStart = start + 0x10000*(pages + gap);
 
 	// reserve the pages
 	for (var n = 0; n < pages; ++n) {
@@ -162,6 +166,11 @@ function sys_mmap_core(proc, ispgoffset) {
 		//	throw Error("page " + pageid + " already allocated");
 		if (!proc.pagemap[pageid])
 			proc.pagemap[pageid] = proc.nextAvailPage++;
+	}
+
+	if (flags & MAP_ANONYMOUS) {
+		// XXX: is this ok?
+		return start;
 	}
 
 	// copy the data (alas)
