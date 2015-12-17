@@ -210,7 +210,11 @@ memFSBackedFile.prototype.read = function(process, size) {
 
 	// XXX: this actually breaks for memfs
 	try {
-		this.data = new Uint8Array(this.node.data).slice(this.pos, this.pos + size);
+		// XXX: stop adding hacks to this and fix it
+		if (typeof this.node.data == 'string')
+			this.data = this.node.data.slice(this.pos, this.pos + size);
+		else
+			this.data = new Uint8Array(this.node.data).slice(this.pos, this.pos + size);
 	} catch (e) {
 		this.data = this.node.data.slice(this.pos, this.pos + size);
 	}
@@ -219,8 +223,11 @@ memFSBackedFile.prototype.read = function(process, size) {
 	return len;
 }
 
-memFSBackedFile.prototype.write = function() {
-	throw Error("no writing yet");
+memFSBackedFile.prototype.write = function(proc, data) {
+	// FIXME XXX: oh so wrong
+	this.node.data = this.node.data + data;
+	this.node.size = this.node.data.length;
+	return data.length;
 }
 
 memFSBackedFile.prototype.clone = function() {
@@ -241,6 +248,7 @@ function memFSNode(data, parent) {
 	this.inode = ++globalInodeHack;
 	this.mode = 0; // XXX: think
 	this.size = 0; // XXX: think
+	this.data = ""; // XXX: think
 	if (data) {
 		this.mode = data.mode;
 	}
