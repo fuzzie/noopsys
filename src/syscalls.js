@@ -184,6 +184,11 @@ function sys_munmap() {
 	return 0;
 }
 
+function sys_madvise(proc) {
+	// We don't care.
+	return 0;
+}
+
 function sys_mprotect() {
 	// FIXME
 	return 0;
@@ -681,14 +686,22 @@ function sys_getrlimit(proc) {
 	return 0;
 }
 
+function sys_getrusage(proc) {
+	var who = proc.registers[4];
+	var usage = proc.registers[5];
+	// FIXME
+	return 0;
+}
+
 function sys_prlimit64(proc) {
 	var pid = proc.registers[4];
 	var resource = proc.registers[5];
 	var new_limit = proc.registers[6];
 	var old_limit = proc.registers[7];
 
+	//console.log("prlimit64: " + resource);
 	// FIXME
-	return 0;
+	return -1;
 }
 
 function sys_gettimeofday(proc) {
@@ -934,7 +947,7 @@ var syscalls = {
 // 4074: sys_sethostname,
 // 4075: sys_setrlimit,
 4076: sys_getrlimit,
-// 4077: sys_getrusage,
+4077: sys_getrusage,
 4078: sys_gettimeofday,
 // 4079: sys_settimeofday,
 4080: sys_getgroups,
@@ -1075,7 +1088,7 @@ var syscalls = {
 4215: sys_fstat64,
 // 4216: sys_pivot_root,
 // 4217: sys_mincore,
-// 4218: sys_madvise,
+4218: sys_madvise,
 4219: sys_getdents64,
 4220: sys_fcntl64,
 // 4221: sys_reserved221,
