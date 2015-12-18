@@ -430,8 +430,10 @@ function sys_open(proc) {
 		return node;
 
 	// XXX: ugh
-	if (flags & O_TRUNC)
+	if (flags & O_TRUNC) {
 		node.data = "";
+		node.size = 0;
+	}
 
 	proc.fds.push(new memFSBackedFile(node));
 	var fd = proc.fds.length-1;

@@ -225,8 +225,24 @@ memFSBackedFile.prototype.read = function(process, size) {
 
 memFSBackedFile.prototype.write = function(proc, data) {
 	// FIXME XXX: oh so wrong
-	this.node.data = this.node.data + data;
-	this.node.size = this.node.data.length;
+	while (this.pos > this.node.size) {
+		// :(
+		this.node.data = this.node.data + '\0';
+		this.node.size++;
+	}
+	if (this.pos < this.node.size) {
+		// Write before end (at least partially overwriting the existing data).
+		if (this.pos + data.length > this.node.size)
+			this.node.size = this.pos + data.length;
+		this.node.data = this.node.data.slice(0, this.pos) + data + this.node.data.slice(this.pos + data.length);
+	} else {
+		// Write at end. We hope.
+		if (this.pos != this.node.size)
+			throw Error("memFS write failed, pls fix kthx (at " + this.pos + " of " + this.node.size + ")");
+		this.node.data = this.node.data + data;
+		this.node.size = this.node.data.length;
+	}
+	this.pos += data.length;
 	return data.length;
 }
 
