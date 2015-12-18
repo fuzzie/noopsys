@@ -118,3 +118,22 @@ var __O_TMPFILE = 0x400000;
 // TODO: do we need this?
 var O_TMPFILE = (__O_TMPFILE | O_DIRECTORY);
 var O_TMPFILE_MASK = (__O_TMPFILE | O_DIRECTORY | O_CREAT);
+
+var F_DUPFD = 0;
+var F_GETFD = 1;
+var F_SETFD = 2;
+var F_GETFL = 3;
+var F_SETFL = 4;
+var F_GETLK = 14; // mips
+var F_SETLK = 6;
+var F_SETLKW = 7;
+var F_SETOWN = 24; // mips
+var F_GETOWN = 23; // mips
+var F_SETSIG = 10;
+var F_GETSIG = 11;
+var F_SETOWN_EX = 15;
+var F_GETOWN_EX = 16;
+var F_GETOWNER_UIDS = 17;
+var F_OFD_GETLK = 36;
+var F_OFD_SETLK = 37;
+var F_OFD_SETLKW = 38;
