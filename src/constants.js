@@ -36,6 +36,15 @@ var EPIPE = 32;
 var EDOM = 33;
 var ERANGE = 34;
 
+// arch/mips/include/uapi/asm/errno.h
+var ENOSYS = 89;
+var ELOOP = 90;
+var ERESTART = 91;
+var ESTRPIPE = 92;
+var ENOTEMPTY = 93;
+var EUSERS = 94;
+var ENOTSOCK = 95;
+
 // clone flags
 var CLONE_PARENT_SETTID = 0x00100000;
 var CLONE_CHILD_CLEARTID = 0x00200000;

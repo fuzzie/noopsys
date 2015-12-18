@@ -33,8 +33,19 @@ function sys_brk(proc) {
 	return proc.brk;
 }
 
+function sys_set_tid_address(proc) {
+	var ptr = proc.registers[4];
+	// FIXME: this should set proc.clear_child_tid for this thread
+	return this.pid; // FIXME: thread id
+}
+
 function sys_set_thread_area(proc) {
 	proc.tlsAddr = proc.registers[4];
+	return 0;
+}
+
+function sys_set_robust_list(proc) {
+	// FIXME
 	return 0;
 }
 
@@ -415,6 +426,11 @@ function sys_pipe(proc) {
 	return infd;
 }
 
+function sys_link(proc) {
+	// FIXME: TODO
+	return -EPERM;
+}
+
 function sys_unlink(proc) {
 	// TODO
 	return 0;
@@ -495,6 +511,11 @@ function sys_umask(proc) {
 	return 0;
 }
 
+function sys_statfs64(proc) {
+	// FIXME
+	return -ENOSYS;
+}
+
 function sys_getcwd(proc) {
 	var buffer = proc.registers[4];
 	var length = proc.registers[5];
@@ -535,6 +556,65 @@ function sys_chdir(proc) {
 		proc.cwd = proc.cwd + filename;
 	}
 	return 0;
+}
+
+function sys_fchdir(proc) {
+	var fd = proc.registers[4];
+	// FIXME
+	return 0;
+}
+
+// these are 'newstat'
+function do_stat(proc, followLinks) {
+	var filename = proc.stringFromUser(proc.registers[4]);
+	var node = getNodeForPath(filename, proc, !followLinks);
+	if (typeof node == 'number')
+		return node;
+
+	return do_stat_core(proc, node);
+}
+
+function do_stat_core(proc, node) {
+	var buf = proc.registers[5];
+	// FIXME
+	proc.write32(buf + 0, 1); // st_dev, TODO
+	// <3 padding bytes>
+	proc.write32(buf + 16, node.inode); // st_ino
+	proc.write32(buf + 20, node.mode); // st_mode
+	proc.write32(buf + 24, 1); // st_nlink, TODO
+	proc.write32(buf + 28, 0); // st_uid, TODO
+	proc.write32(buf + 32, 0); // st_gid, TODO
+	proc.write32(buf + 36, 0); // st_rdev, TODO
+	// <2 padding bytes>
+	proc.write32(buf + 48, node.size); // st_size, TODO
+	proc.write32(buf + 52, 0); // st_size (high bits)
+	proc.write32(buf + 56, 0); // st_atime, TODO
+	// TODO: plus nanosecs?
+	proc.write32(buf + 64, 0); // st_mtime, TODO
+	// TODO: plus nanosecs?
+	proc.write32(buf + 72, 0); // st_ctime, TODO
+	// TODO: plus nanosecs?
+	proc.write32(buf + 80, 0); // st_blksize, TODO
+	proc.write32(buf + 84, 0); // st_blocks, TODO
+
+	return 0;
+}
+
+function sys_stat(proc) {
+	return do_stat(proc, true);
+}
+
+function sys_lstat(proc) {
+	return do_stat(proc, false);
+}
+
+function sys_fstat(proc) {
+	var fd = proc.registers[4];
+	var fdo = proc.fds[fd];
+	if (!fdo || !fdo.node)
+		return -EBADF;
+	// XXX
+	return do_stat_core(proc, fdo.node);
 }
 
 function do_stat64(proc, followLinks) {
@@ -853,6 +933,11 @@ function sys_rt_sigprocmask(proc) {
 	return 0;
 }
 
+function sys_sigaltstack(proc) {
+	// FIXME
+	return 0;
+}
+
 function sys_time(proc) {
 	// FIXME
 	return 0;
@@ -999,7 +1084,7 @@ var syscalls = {
 4006: sys_close,
 4007: sys_waitpid,
 // 4008: sys_creat,
-// 4009: sys_link,
+4009: sys_link,
 4010: sys_unlink,
 4011: sys_execve,
 4012: sys_chdir,
@@ -1096,9 +1181,9 @@ var syscalls = {
 // 4103: sys_syslog,
 // 4104: sys_setitimer,
 // 4105: sys_getitimer,
-// 4106: sys_stat, /* sys_newstat */
-// 4107: sys_lstat, /* sys_newlstat */
-// 4108: sys_fstat, /* sys_newfstat */
+4106: sys_stat, /* sys_newstat */
+4107: sys_lstat, /* sys_newlstat */
+4108: sys_fstat, /* sys_newfstat */
 // 4109: sys_uname,
 // 4110: sys_iopl, /* not implemented */
 // 4111: sys_vhangup,
@@ -1123,7 +1208,7 @@ var syscalls = {
 // 4130: sys_get_kernel_syms, /* not implemented */
 // 4131: sys_quotactl,
 // 4132: sys_getpgid,
-// 4133: sys_fchdir,
+4133: sys_fchdir,
 // 4134: sys_bdflush,
 // 4135: sys_sysfs,
 // 4136: sys_personality, /* not implemented, for afs_syscall */
@@ -1196,7 +1281,7 @@ var syscalls = {
 4203: sys_getcwd,
 // 4204: sys_capget,
 // 4205: sys_capset,
-// 4206: sys_sigaltstack,
+4206: sys_sigaltstack,
 // 4207: sys_sendfile,
 // 4208: sys_getpmsg,
 // 4209: sys_putpmsg,
@@ -1242,10 +1327,10 @@ var syscalls = {
 // 4249: sys_epoll_ctl,
 // 4250: sys_epoll_wait,
 // 4251: sys_remap_file_pages,
-// 4252: sys_set_tid_address,
+4252: sys_set_tid_address,
 // 4253: sys_restart_syscall,
 // 4254: sys_fadvise64,
-// 4255: sys_statfs64,
+4255: sys_statfs64,
 // 4256: sys_fstatfs64,
 // 4257: sys_timer_create,
 // 4258: sys_timer_settime,
@@ -1299,7 +1384,7 @@ var syscalls = {
 // 4306: sys_tee,
 // 4307: sys_vmsplice,
 // 4308: sys_move_pages,
-// 4309: sys_set_robust_list,
+4309: sys_set_robust_list,
 // 4310: sys_get_robust_list,
 // 4311: sys_kexec_load,
 // 4312: sys_getcpu,
