@@ -645,7 +645,8 @@ function sys_waitpid(proc) {
 		if (p.ppid == proc.pid && p.exited && p.exitCode != 'x') { // XXX
 			var statusvar = 0; // TODO: terminating signal?
 			statusvar |= ((p.exitCode & 0xff) << 8);
-			proc.write32(status, statusvar);
+			if (status)
+				proc.write32(status, statusvar);
 			p.exitCode = 'x'; // XXX hack :(
 			return p.pid;
 		}
