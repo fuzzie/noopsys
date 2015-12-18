@@ -4,6 +4,7 @@ var SQUASHFS_METADATA_SIZE = 8192;
 var SQUASHFS_DIR_TYPE = 1;
 var SQUASHFS_FILE_TYPE = 2;
 var SQUASHFS_SYMLINK_TYPE = 3;
+var SQUASHFS_LDIR_TYPE = 8;
 var SQUASHFS_LREG_TYPE = 9;
 
 function SquashFSError(msg) {
@@ -178,6 +179,24 @@ function SquashFSDirInode(sfs) {
 	this.parent_inode = sfs.read32();
 }
 
+function SquashFSLDirInode(sfs) {
+	SquashFSInode.call(this, sfs);
+
+	this.mode |= S_IFDIR;
+	this.inode_type = SQUASHFS_LDIR_TYPE;
+
+	this.nlink = sfs.read32();
+	this.size = sfs.read32();
+	this.start_block = sfs.read32();
+	this.parent_inode = sfs.read32();
+	this.i_count = sfs.read16();
+	this.offset = sfs.read16();
+	this.xattr = sfs.read32();
+
+	// FIXME: what are the indexes (following) for?
+}
+SquashFSLDirInode.prototype = Object.create(SquashFSDirInode.prototype);
+
 SquashFSDirInode.prototype.getChildren = function() {
 	if (this.children !== undefined)
 		return this.children;
@@ -259,6 +278,8 @@ SquashFS.prototype.readInode = function(inode) {
 		return new SquashFSFileInode(this);
 	case SQUASHFS_SYMLINK_TYPE:
 		return new SquashFSSymlinkInode(this);
+	case SQUASHFS_LDIR_TYPE:
+		return new SquashFSLDirInode(this);
 	case SQUASHFS_LREG_TYPE:
 		return new SquashFSLRegInode(this);
 	default:
