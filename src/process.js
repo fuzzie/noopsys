@@ -448,7 +448,7 @@ if (typeof window == 'undefined') {
 			switch (subOpcodeS) {
 			case 0: // sll
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] << sa) >>> 0;
+				this.registers[rd] = this.registers[rt] << sa;
 				break;
 			case 2: // srl
 				if (rd == 0) break;
@@ -456,7 +456,7 @@ if (typeof window == 'undefined') {
 				break;
 			case 3: // sra
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] >> 0) >> sa;
+				this.registers[rd] = this.registers[rt] >> sa;
 				break;
 			case 4: // sllv
 				if (rd == 0) break;
@@ -468,7 +468,7 @@ if (typeof window == 'undefined') {
 				break;
 			case 7: // srav
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] >> 0) >> (this.registers[rs] >> 0);
+				this.registers[rd] = this.registers[rt] >> (this.registers[rs] & 0x1f);
 				break;
 			case 8: // jr
 				this.pendingBranch = this.registers[rs];
@@ -518,8 +518,9 @@ if (typeof window == 'undefined') {
 				var w1 = (t >> 16) >>> 0;
 				var t = (((u1*v0 + w2) >>> 0) & 0xffffffff) >>> 0;
 				k = (t >> 16) >>> 0;
-				//this.resultLow = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
-				this.resultLow = (((this.registers[rt] >> 0) * (this.registers[rs] >> 0)) & 0xffffffff) >>> 0;
+				this.resultLow = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
+				// line below is wrong :/
+				//this.resultLow = (((this.registers[rt] >> 0) * (this.registers[rs] >> 0)) & 0xffffffff) >>> 0;
 				this.resultHigh = (((u0*v0 + w1 + k) >>> 0) & 0xffffffff) >>> 0;
 				//console.log("assert " + (this.registers[rs] >> 0) + " * " + (this.registers[rt] >> 0) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8)); // note you have to postprocess this for negative numbers :p
 				break;
@@ -538,7 +539,11 @@ if (typeof window == 'undefined') {
 				//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
 				break;
 			case 26: // div
-				throw Error(); // FIXME
+				// FIXME: not tested
+				if (this.registers[rt] == 0)
+					break; // undefined
+				this.resultLow = ((this.registers[rs] >> 0) / (this.registers[rt] >> 0)) >>> 0;
+				this.resultHigh = (((this.registers[rs] >> 0) % (this.registers[rt] >> 0)) + (this.registers[rt] >> 0)) % (this.registers[rt] >> 0);
 				break;
 			case 27: // divu
 				if (this.registers[rt] == 0)
@@ -689,7 +694,7 @@ if (typeof window == 'undefined') {
 			if (this.registers[rs] == this.registers[rt])
 				this.pendingBranch = this.pc + (simm << 2);
 			break;
-		case 17: // beql
+		case 20: // beql
 			if (this.registers[rs] == this.registers[rt])
 				this.pendingBranch = this.pc + (simm << 2);
 			else
@@ -699,7 +704,7 @@ if (typeof window == 'undefined') {
 			if (this.registers[rs] != this.registers[rt])
 				this.pendingBranch = this.pc + (simm << 2);
 			break;
-		case 18: // bnel
+		case 21: // bnel
 			if (this.registers[rs] != this.registers[rt])
 				this.pendingBranch = this.pc + (simm << 2);
 			else
@@ -734,14 +739,14 @@ if (typeof window == 'undefined') {
 			break;
 		case 10: // slti
 			if (rt == 0) break;
-			if (this.registers[rs] < simm)
+			if ((this.registers[rs] >> 0) < simm)
 				this.registers[rt] = 1;
 			else
 				this.registers[rt] = 0;
 			break;
 		case 11: // sltiu
 			if (rt == 0) break;
-			if (this.registers[rs] < imm)
+			if (this.registers[rs] < (simm >>> 0))
 				this.registers[rt] = 1;
 			else
 				this.registers[rt] = 0;
