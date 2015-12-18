@@ -258,7 +258,7 @@ function sys__llseek(proc) {
 	var result = proc.registers[7];
 	var whence = proc.read32(proc.registers[29] + 16);
 
-	if (offset_high != 0xffffffff && offset_high != 0)
+	if (offset_high != -1 && offset_high != 0)
 		return -ERANGE; // Linux doesn't allow this, but..
 
 	var ret = do_lseek(proc, fd, offset_low, whence);
@@ -435,6 +435,9 @@ function sys_open(proc) {
 		node.size = 0;
 	}
 
+	if (flags & O_APPEND)
+		throw Error("O_APPEND"); // FIXME
+
 	proc.fds.push(new memFSBackedFile(node));
 	var fd = proc.fds.length-1;
 	return fd;
@@ -461,6 +464,12 @@ function sys_openat(proc) {
 	proc.fds.push(new memFSBackedFile(node));
 	var fd = proc.fds.length-1;
 	return fd;
+}
+
+function sys_umask(proc) {
+	var mask = proc.registers[4];
+	// FIXME
+	return 0;
 }
 
 function sys_getcwd(proc) {
@@ -613,6 +622,11 @@ function sys_getdents64(proc) {
 function sys_fcntl64(proc) {
 	// FIXME
 	return -1;
+}
+
+function sys_chmod(proc) {
+	// FIXME
+	return 0;
 }
 
 function sys_fchmod(proc) {
@@ -910,7 +924,7 @@ function sys_execve(proc) {
 
 	// TODO: reset signals
 	// TODO: close close-on-exec fds
-	// TODO: other stuff
+	// TODO: other stuff (registers? elf loader should zero them)
 	proc.initMemory();
 
 	// FIXME
@@ -968,7 +982,7 @@ var syscalls = {
 4012: sys_chdir,
 4013: sys_time,
 // 4014: sys_mknod,
-// 4015: sys_chmod,
+4015: sys_chmod,
 // 4016: sys_lchown,
 // 4017: sys_break, /* not implemented */
 // 4018: sys_unused18, /* was sys_stat */
@@ -1013,7 +1027,7 @@ var syscalls = {
 4057: sys_setpgid,
 // 4058: sys_ulimit, /* not implemented */
 // 4059: sys_olduname,
-// 4060: sys_umask,
+4060: sys_umask,
 // 4061: sys_chroot,
 // 4062: sys_ustat,
 4063: sys_dup2,
