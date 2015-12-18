@@ -723,8 +723,28 @@ function sys_getdents64(proc) {
 }
 
 function sys_fcntl64(proc) {
-	// FIXME
-	return -1;
+	var fd = proc.registers[4];
+	var cmd = proc.registers[5];
+	var arg = proc.registers[6];
+
+	var fdo = proc.fds[fd];
+	if (!fdo)
+		return -EBADF;
+
+	switch (cmd) {
+	case F_DUPFD:
+		var f = arg;
+		while (proc.fds[f]) f++;
+		proc.fds[f] = fdo;
+		proc.fds[f].refs++; // XXX: super temp hack for pipes
+		return f;
+	case F_SETFD:
+		// FIXME: set FD_CLOEXEC
+		return 0;
+	default:
+		console.log("fcntl64: " + cmd + " on " + fd);
+		return -EINVAL;
+	}
 }
 
 function sys_chmod(proc) {
