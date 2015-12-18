@@ -478,7 +478,7 @@ function sys_getcwd(proc) {
 
 	var path = proc.cwd;
 
-	var ret = buffer;
+	var ret = path.length + 1;
 	if (path.length + 1 > length) {
 		ret = -ERANGE;
 	} else {
