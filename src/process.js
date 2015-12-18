@@ -185,6 +185,15 @@ if (typeof window == 'undefined') {
 	}
 
 	this.loadElf = function(buffer, argv, envp) {
+		// XXX: sigh
+		if (typeof buffer == 'string') {
+			var tmpbuf = new ArrayBuffer(buffer.length);
+			var tmpview = new Uint8Array(tmpbuf);
+			for (var n = 0; n < buffer.length; ++n)
+				tmpview[n] = buffer.charCodeAt(n);
+			buffer = tmpbuf;
+		}
+
 		var elf = new ELFFile(buffer);
 		var u8a = new Uint8Array(buffer);
 		var u32a = new Uint32Array(buffer);
