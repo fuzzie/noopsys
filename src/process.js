@@ -1,8 +1,8 @@
 function Process() {
 	// note: buffers always initialized to zero
 
-	// Registers: MIPS has 32.
-	this.registersBuffer = new ArrayBuffer(32 * 4);
+	// Registers: MIPS has 32, plus 32 fp = 64.
+	this.registersBuffer = new ArrayBuffer(64 * 4);
 	this.registers = new Uint32Array(this.registersBuffer);
 
 	// Registers: Plus the PC, and we handle delayed branches here too.
@@ -21,6 +21,8 @@ function Process() {
 
 	this.createMaps = function() {
 		this.registers = new Uint32Array(this.registersBuffer);
+		this.fpregs32 = new Float32Array(this.registersBuffer);
+		this.fpregs64 = new Float64Array(this.registersBuffer);
 		this.mem8 = new Uint8Array(this.memory);
 		this.mem32 = new Uint32Array(this.memory);
 		this.pagemap = new Uint16Array(this.pagemapBuffer);
@@ -888,13 +890,160 @@ if (typeof window == 'undefined') {
 			// Everything is atomic in our world.
 			this.registers[rt] = 1;
 			break;
+		// *** fpu ***
+		case 17: // cop1
+			// Unfortunately, even gcc startup needs floating-point support.
+			// This is a pretty minimal (and possibly broken) implementation.
+			// fmt 16 (fmt3 0) = float
+			// fmt 17 (fmt3 1) = double
+			// fmt 20 (fmt3 4) = 32-bit signed integer
+			// fmt 21 (fmt3 5) = 64-bit signed integer, MIPS III
+			var fmt = rs;
+			var ft = rt;
+			var fs = rd;
+			var fd = sa;
+			//console.log(myInst.toString(16));
+			// TODO: check for $fp0
+			if (fmt == 0) {
+				// mfc1
+				if (rt == 0) break;
+				this.registers[rt] = this.registers[32 + fs];
+				break;
+			}
+			if (fmt == 8) {
+				// bc
+				var cc = ft >>> 2;
+				if (cc != 0) throw Error("fpu: non-zero cc bit " + cc); // we're not MIPS IV
+				var ifTrue = ft & 0x1;
+				var likely = ft & 0x2;
+				var bit = (this.registers[63] >> 23) & 0x1;
+				if (ifTrue == bit) {
+					this.pendingBranch = this.pc + (simm << 2);
+				} else if (likely) {
+					this.pc = this.pc + 4;
+				}
+				break;
+			}
+			switch (subOpcodeS) {
+			case 0: // add
+				if (fmt == 4) {
+					// mtc1
+					this.registers[32 + rt] = this.registers[fs];
+					break;
+				}
+				if (fmt != 16 && fmt != 17) throw Error("unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.fpregs32[32 + fd] = this.fpregs32[32 + fs] + this.fpregs32[32 + ft];
+				else
+					this.fpregs64[(32 + fd) << 1] = this.fpregs64[(32 + fs) << 1] + this.fpregs64[(32 + ft) << 1];
+				break;
+			case 1: // sub
+				if (fmt != 16 && fmt != 17) throw Error("unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.fpregs32[32 + fd] = this.fpregs32[32 + fs] - this.fpregs32[32 + ft];
+				else
+					this.fpregs64[(32 + fd) << 1] = this.fpregs64[(32 + fs) << 1] - this.fpregs64[(32 + ft) << 1];
+				break;
+			case 2: // mul
+				if (fmt != 16 && fmt != 17) throw Error("unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.fpregs32[32 + fd] = this.fpregs32[32 + fs] * this.fpregs32[32 + ft];
+				else
+					this.fpregs64[(32 + fd) << 1] = this.fpregs64[(32 + fs) << 1] * this.fpregs64[(32 + ft) << 1];
+				break;
+			case 3: // div
+				if (fmt != 16 && fmt != 17) throw Error("unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.fpregs32[32 + fd] = this.fpregs32[32 + fs] / this.fpregs32[32 + ft];
+				else
+					this.fpregs64[(32 + fd) << 1] = this.fpregs64[(32 + fs) << 1] / this.fpregs64[(32 + ft) << 1];
+				break;
+			case 6: // mov
+				if (fmt != 16 && fmt != 17) throw Error("unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.fpregs32[32 + fd] = this.fpregs32[32 + fs];
+				else
+					this.fpregs64[(32 + fd) << 1] = this.fpregs64[(32 + fs) << 1];
+				break;
+			case 13: // trunc.w
+				// FIXME: is this ok for out-of-bounds cases?
+				if (fmt != 16 && fmt != 17) throw Error("unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.registers[32 + fd] = this.fpregs32[32 + fs] >> 0;
+				else
+					this.registers[32 + fd] = this.fpregs64[(32 + fs) << 1] >> 0;
+				break;
+			case 17: // movc
+				throw Error(); // FIXME: not implemented
+				var tf = ft & 0x1; // if 1, condition should be true
+				var cc = ft >>> 2;
+				if (cc != 0) throw Error("fpu: non-zero cc bit " + cc); // we're not MIPS IV
+				var bit = (this.registers[63] >> 23) & 0x1;
+				break;
+			case 33: // cvt.d
+				if (fmt != 16 && fmt != 20) throw Error("cvt.d: unknown fp fmt " + fmt);
+				if (fmt == 16)
+					this.fpregs64[32 + fd] = this.fpregs32[32 + fs];
+				else
+					this.fpregs64[32 + fd] = (this.registers[32 + fs] >> 0);
+				break;
+			default:
+				if (subOpcodeS & 0x30) {
+					// c.cond
+					if (fmt != 16 && fmt != 17 && fmt != 20) throw Error("unknown fp fmt " + fmt);
+					var hasExceptions = subOpcodeS & 0x8; // TODO: do we care?
+					var result = false;
+					switch (subOpcodeS & 0x7) {
+					case 0: // false
+						result = false;
+						break;
+					case 4: // lt
+						if (fmt == 16)
+							result = this.fpregs32[32 + fs] < this.fpregs32[32 + ft];
+						else if (fmt == 17)
+							result = this.fpregs64[(32 + fs) << 1] < this.fpregs64[(32 + ft) << 1];
+						else
+							result = (this.registers[32 + fs] >> 0) < (this.registers[32 + ft] >> 0);
+						break;
+					case 6: // le
+						if (fmt == 16)
+							result = this.fpregs32[32 + fs] <= this.fpregs32[32 + ft];
+						else if (fmt == 17)
+							result = this.fpregs64[(32 + fs) << 1] <= this.fpregs64[(32 + ft) << 1];
+						else
+							result = (this.registers[32 + fs] >> 0) <= (this.registers[32 + ft] >> 0);
+						break;
+					default:
+						throw Error("unimplemented condition " + (subOpcodeS & 0x7));
+					}
+					if (result)
+						this.registers[63] = this.registers[63] | 0x800000;
+					else
+						this.registers[63] = this.registers[63] & ~(0x800000);
+					break;
+				}
+				throw new Error("bad fpu instruction " + subOpcodeS);
+			}
+			break;
+		case 49: // lwc1
+			var addr = this.registers[rs] + simm;
+			this.registers[32 + rt] = this.read32(addr >>> 0);
+			break;
+		case 53: // ldc1
+			// TODO: fail on non-even rt?
+			var addr = this.registers[rs] + simm;
+			this.registers[32 + rt] = this.read32(addr >>> 0);
+			this.registers[33 + rt] = this.read32((addr + 4) >>> 0);
+			break;
+		case 57: // swc1
+			var addr = this.registers[rs] + simm;
+			this.write32(addr >>> 0, this.registers[32 + rt]);
+			break;
 		case 61: // sdc1
-			// rs is base
-			// rt is ft (the high word comes from ft+1)
-			// simm is offset
-			if (rt >= 20 && rt <= 30)
-				break; // these are used by code saving fp registers
-			throw Error("sdc1 with register " + rt);
+			// TODO: fail on non-even rt?
+			var addr = this.registers[rs] + simm;
+			this.write32(addr >>> 0, this.registers[32 + rt]);
+			this.write32((addr + 4) >>> 0, this.registers[33 + rt]);
 			break;
 		default:
 			// coprocessor is 0100zz, i.e. 16 t/m 31
