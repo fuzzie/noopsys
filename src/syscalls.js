@@ -1,3 +1,26 @@
+function sys_sysinfo(proc) {
+	var buf = proc.registers[4];
+
+	// TODO
+	proc.write32(buf + 0, ((new Date() - bootTime) / 1000)); // uptime (seconds since boot)
+	proc.write32(buf + 4, 0); // 1-minute load avg
+	proc.write32(buf + 8, 0); // 5-minute load avg
+	proc.write32(buf + 12, 0); // 15-minute load avg
+	proc.write32(buf + 16, 0); // totalram
+	proc.write32(buf + 20, 0); // freeram
+	proc.write32(buf + 24, 0); // sharedram
+	proc.write32(buf + 28, 0); // bufferram
+	proc.write32(buf + 32, 0); // totalswap
+	proc.write32(buf + 36, 0); // freeswap
+	proc.write16(buf + 40, 0); // procs (# current processes)
+	// <pad>
+	proc.write32(buf + 44, 0); // totalhigh (total high memory)
+	proc.write32(buf + 48, 0); // freehigh (available high memory)
+	proc.write32(buf + 52, 1); // mem_unit
+
+	return 0;
+}
+
 function sys_brk(proc) {
 	// XXX: this is all just a hack
 	if (proc.registers[4] == 0)
@@ -1083,7 +1106,7 @@ var syscalls = {
 // 4113: sys_vm86, /* not implemented */
 4114: sys_wait4,
 // 4115: sys_swapoff,
-// 4116: sys_sysinfo,
+4116: sys_sysinfo,
 // 4117: sys_ipc,
 // 4118: sys_fsync,
 // 4119: sys_sigreturn,
