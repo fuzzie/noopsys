@@ -60,6 +60,10 @@ PipeReader.prototype.read = function(process, size) {
 	if (this.src.refs == 0)
 		return this.data.length;
 
+	// We're a pipe, so return any data we have.
+	if (this.data.length)
+		return this.data.length;
+
 	// Resume the process once data is available.
 	this.src.readCallbacks.push(function() {
 		process.running = true;
@@ -110,16 +114,21 @@ StreamBackedFile.prototype.read = function(process, size) {
 	if (this.data.length >= size)
 		return size;
 
-	// Read all data available (we could avoid buffering here, but meh).
-	var data = this.readStream.read(size);
+	// Read all data available (we can't avoid buffering here, because read(size) returns null
+	// if it doesn't have all those bytes available, and terminals return partial reads).
+	var data = this.readStream.read();
 	if (data) {
-		this.data = Buffer.concat([this.data, data])
+		this.data = Buffer.concat([this.data, data]);
 		if (this.data.length >= size)
 			return size;
 	}
 
 	// We couldn't fill the buffer; did we reach the end?
 	if (this.ended)
+		return this.data.length;
+
+	// In fact, we're only using this for terminals/pipes, so:
+	if (this.data.length)
 		return this.data.length;
 
 	// Resume the process once data is available.
@@ -169,6 +178,10 @@ StreamBackedFile.prototype.close = function() {
 		// If we already buffered enough data, return it.
 		if (this.data.length >= size)
 			return size;
+
+		// We're a terminal, so return any data we have.
+		if (this.data.length)
+			return this.data.length;
 
 		// Resume the process once data is available.
 		this.term.once('data', function(chunk) {
