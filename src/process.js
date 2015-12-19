@@ -29,13 +29,15 @@ function Process() {
 	}
 
 	this.initMemory = function() {
-		// Allocate 16mb RAM for now.
-		this.memory = new ArrayBuffer(1024 * 1024 * 16);
+		// Allocate 80mb RAM for now.
+		this.memory = new ArrayBuffer(1024 * 1024 * 80);
 
 		// 64kB "pages", 2gb userspace
 		this.pagemapBuffer = new ArrayBuffer(32768 * 2);
 		this.nextAvailPage = 1; // FIXME: write an allocator
-		this.mmapHackStart = 0x8000000;
+
+		// TODO: think about this
+		this.mmapHackStart = 0x9000000;
 
 		this.brk = 0;
 		this.tlsAddr = 0;
@@ -75,8 +77,8 @@ if (typeof window == 'undefined') {
 	this.cwd = "/";
 
 	// Attempt at optimisation.
-	this.optOldPage = 0xfffffff >>> 0;
-	this.optOldAddr = 0xfffffff >>> 0;
+	this.optOldPage = 0xffffffff >>> 0;
+	this.optOldAddr = 0xffffffff >>> 0;
 
 	this.cloneFrom = function(source) {
 		// Caller is responsible for setting pid/ppid.
@@ -136,14 +138,14 @@ if (typeof window == 'undefined') {
 			v += this.mem8[this.translate(addr + 3)] << 24;
 		}
 		if (debug) console.log("read " + addr.toString(16) + " (" + v.toString(16) + ")");
-		return v;
+		return v >>> 0;
 	}
 
 	this.read16 = function(addr) {
 		// FIXME 
 		var v = this.mem8[this.translate(addr)];
 		v += this.mem8[this.translate(addr + 1)] << 8;
-		return v;
+		return v >>> 0;
 	}
 
 	this.write8 = function(addr, value) {
@@ -200,7 +202,7 @@ if (typeof window == 'undefined') {
 
 		var baseaddr = undefined;
 
-		var load_bias = 0x200000;
+		var load_bias = 0x2000000;
 
 		// TODO: We just quietly assume headers/sections are aligned.
 		for (var p = 0; p < elf.headers.length; ++p) {
@@ -213,6 +215,7 @@ if (typeof window == 'undefined') {
 
 			switch (header.pType) {
 			case 1: // PT_LOAD
+				//console.log("mapping section at 0x" + header.pVAddr.toString(16));
 				if (baseaddr == undefined)
 					baseaddr = header.pVAddr - header.pOffset;
 				for (var b = 0; b < header.pFileSz; ++b) {
@@ -228,10 +231,11 @@ if (typeof window == 'undefined') {
 						this.pagemap[(header.pVAddr + b) >>> 16] = this.nextAvailPage++;
 				}
 				break;
-			case 0x70000000: // PT_MIPS_REGINFO
+//			case 0x70000000: // PT_MIPS_REGINFO
 				// The 6th value is the initial value of the gp register.
-				this.registers[28] = u32a[(header.pOffset >>> 2) + 5];
-				break;
+				// (This seems to be handled by libc.)
+//				this.registers[28] = u32a[(header.pOffset >>> 2) + 5];
+//				break;
 			}
 		}
 
@@ -261,6 +265,7 @@ if (typeof window == 'undefined') {
 
 				// TODO: this is an ugly hack
 				header.pVAddr += 0x10000;
+				//console.log("mapping interp section at 0x" + header.pVAddr.toString(16));
 
 				if (interp_baseaddr == baseaddr)
 					interp_baseaddr = header.pVAddr - header.pOffset;
@@ -288,17 +293,18 @@ if (typeof window == 'undefined') {
 		}
 
 		// FIXME: allocate heap, stack
-		this.brk = 0xb000000;
-		for (var p = 0; p < 10; ++p)
-			this.pagemap[0xb00 + p] = this.nextAvailPage++;
+		this.brk = 0x8000000;
+		for (var p = 0; p < 100; ++p)
+			this.pagemap[0x800 + p] = this.nextAvailPage++;
 
-		var sp = 0xc00fff0;
-		for (var p = 0; p < 5; ++p)
-			this.pagemap[0xc00 + p] = this.nextAvailPage++;
+		// In practice, not even a single page of the stack seems to generally be used.
+		var sp = 0xc000ff0;
+		for (var p = 0; p < 10; ++p)
+			this.pagemap[0xc00 - p] = this.nextAvailPage++;
 
 		// XXX hack for args
-		var dummy = 0xa000000;
-		this.pagemap[0xa00] = this.nextAvailPage++;
+		var dummy = 0xb000000;
+		this.pagemap[0xb00] = this.nextAvailPage++;
 		var argp = new Array();
 		var envpp = new Array();
 
@@ -317,7 +323,7 @@ if (typeof window == 'undefined') {
 			this.mem8[this.translate(dummy++)] = 0;
 		}
 
-		sp = sp - (19 + argp.length + envpp.length)*4; // FIXME: de-hardcode
+		sp = sp - (17 + argp.length + envpp.length)*4; // FIXME: de-hardcode
 		this.registers[29] = sp;
 
 		// Write arguments/environment.
@@ -361,10 +367,10 @@ if (typeof window == 'undefined') {
 		sp += 4;
 		this.write32(sp, elf.entryPoint);
 		sp += 4;
-		this.write32(sp, 31); // AT_EXECFN
-		sp += 4;
-		this.write32(sp, 0x100); // XXX: hack
-		sp += 4;
+		//this.write32(sp, 31); // AT_EXECFN
+		//sp += 4;
+		//this.write32(sp, 0x100); // XXX: hack
+		//sp += 4;
 		this.write32(sp, 0); // AT_NULL
 		sp += 4;
 		this.write32(sp, 0);
@@ -382,6 +388,8 @@ if (typeof window == 'undefined') {
 			console.log("pid " + this.pid + ": syscall " + syscallnr + " (" + syscalls[syscallnr].name + ")");
 
 		var ret = syscalls[syscallnr](this);
+		if (showSystemCalls)
+			console.log("returned " + ret);
 
 		if (!this.running)
 			return;
@@ -401,10 +409,10 @@ if (typeof window == 'undefined') {
 		if (addr < 0)
 			throw Error("you broke it address " + addr.toString(16));
 		if (addr >= 0x80000000)
-			throw Error("bad address " + addr.toString(16));
+			throw Error("bad address " + addr.toString(16) + " at pc " + this.pc.toString(16));
 		var pageId = this.pagemap[addr >>> 16];
 		if (pageId == 0)
-			throw Error("bad address " + addr.toString(16));
+			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.pc.toString(16));
 		return (pageId << 16) + (addr & 0xffff);
 	}
 
@@ -457,7 +465,7 @@ if (typeof window == 'undefined') {
 			switch (subOpcodeS) {
 			case 0: // sll
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] << sa;
+				this.registers[rd] = (this.registers[rt] << sa) >>> 0;
 				break;
 			case 2: // srl
 				if (rd == 0) break;
@@ -465,19 +473,19 @@ if (typeof window == 'undefined') {
 				break;
 			case 3: // sra
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] >> sa;
+				this.registers[rd] = (this.registers[rt] >> sa) >>> 0;
 				break;
 			case 4: // sllv
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] << (this.registers[rs] & 0x1f);
+				this.registers[rd] = (this.registers[rt] << (this.registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 6: // srlv
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] >>> (this.registers[rs] & 0x1f);
+				this.registers[rd] = (this.registers[rt] >>> (this.registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 7: // srav
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] >> (this.registers[rs] & 0x1f);
+				this.registers[rd] = (this.registers[rt] >> (this.registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 8: // jr
 				this.pendingBranch = this.registers[rs];
@@ -544,7 +552,7 @@ if (typeof window == 'undefined') {
 				this.resultLow = ((((mid << 16) + low) >>> 0) & 0xffffffff) >>> 0;
 				this.resultHigh = (th * sh) + (tmp >>> 16);
 				if (tmp > 0xffffffff) this.resultHigh += 0x10000;
-				this.resultHigh = (this.resultHigh >>> 0) & 0xffffffff;
+				this.resultHigh = this.resultHigh >>> 0;
 				//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
 				break;
 			case 26: // div
@@ -552,7 +560,7 @@ if (typeof window == 'undefined') {
 				if (this.registers[rt] == 0)
 					break; // undefined
 				this.resultLow = ((this.registers[rs] >> 0) / (this.registers[rt] >> 0)) >>> 0;
-				this.resultHigh = (((this.registers[rs] >> 0) % (this.registers[rt] >> 0)) + (this.registers[rt] >> 0)) % (this.registers[rt] >> 0);
+				this.resultHigh = ((((this.registers[rs] >> 0) % (this.registers[rt] >> 0)) + (this.registers[rt] >> 0)) % (this.registers[rt] >> 0)) >>> 0;
 				break;
 			case 27: // divu
 				if (this.registers[rt] == 0)
@@ -755,6 +763,9 @@ if (typeof window == 'undefined') {
 			break;
 		case 11: // sltiu
 			if (rt == 0) break;
+			/*console.log((this.registers[rs]).toString(16));
+			console.log((simm >>> 0).toString(16));
+			console.log(this.registers[rs] < (simm >>> 0));*/
 			if (this.registers[rs] < (simm >>> 0))
 				this.registers[rt] = 1;
 			else
@@ -851,7 +862,7 @@ if (typeof window == 'undefined') {
 			if (rt == 0) break;
 			var addr = this.registers[rs] + simm;
 			var v = this.mem8[this.translate(addr >>> 0)];
-			this.registers[rt] = v;
+			this.registers[rt] = v >>> 0;
 			break;
 		case 40: // sb
 			var addr = this.registers[rs] + simm;
@@ -863,7 +874,7 @@ if (typeof window == 'undefined') {
 			break;
 		case 42: // swl
 			// FIXME: verify
-			var addr = this.registers[rs] + simm;
+/*			var addr = this.registers[rs] + simm;
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			// We have the most-significant bits and we want to make them the least-significant ones.
@@ -873,11 +884,22 @@ if (typeof window == 'undefined') {
 			else
 				mask = 0xffffffff << ((1 + mask) * 8);
 			value = (this.read32(addr >>> 0) & mask) | value;
-			this.write32(addr >>> 0, value);
+			this.write32(addr >>> 0, value);*/
+			var addr = this.registers[rs] + simm;
+			//console.log("swl " + this.read32(addr).toString(16));
+			var mask = (addr & 3) ^ 3;
+			var value = this.registers[rt];
+			this.mem8[this.translate(addr >>> 0)] = value >>> 24;
+			if (mask <= 2)
+				this.mem8[this.translate((addr - 1) >>> 0)] = value >>> 16;
+			if (mask <= 1)
+				this.mem8[this.translate((addr - 2) >>> 0)] = value >>> 8;
+			if (mask == 0)
+				this.mem8[this.translate((addr - 3) >>> 0)] = value >>> 0;
 			break;
 		case 46: // swr
 			// FIXME: verify
-			var addr = this.registers[rs] + simm;
+			/*var addr = this.registers[rs] + simm;
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			// We have the least-significant bits and we want to make them the most-significant ones.
@@ -885,7 +907,18 @@ if (typeof window == 'undefined') {
 			if (mask != 0) // agh js
 				mask = 0xffffffff >>> ((4 - mask) * 8);
 			value = (this.read32(addr >>> 0) & mask) | value;
-			this.write32(addr >>> 0, value);
+			this.write32(addr >>> 0, value);*/
+			var addr = this.registers[rs] + simm;
+			//console.log("swr " + this.read32(addr).toString(16));
+			var mask = (addr & 3) ^ 3;
+			var value = this.registers[rt];
+			this.mem8[this.translate(addr >>> 0)] = value >>> 0;
+			if (mask >= 1)
+				this.mem8[this.translate((addr + 1) >>> 0)] = value >>> 8;
+			if (mask >= 2)
+				this.mem8[this.translate((addr + 2) >>> 0)] = value >>> 16;
+			if (mask == 3)
+				this.mem8[this.translate((addr + 3) >>> 0)] = value >>> 24;
 			break;
 		case 43: // sw
 			var addr = this.registers[rs] + simm;
