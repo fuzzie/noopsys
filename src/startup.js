@@ -21,8 +21,9 @@ function myLoop() {
 		}
 		if (p.running)
 			busy = true;
-		if (p.exited && p.memory != null) {
+		if (p.exited && p.pagemapPage != 0) {
 			// XXX: obey wait options etc
+			p.freeResources();
 			p.closeFds();
 			for (var n = 0; n < p.exitCallbacks.length; ++n)
 				p.exitCallbacks[n]();
@@ -34,9 +35,6 @@ function myLoop() {
 				clearTimeout(myTimer);
 				return;
 			}
-			processes.memory = null;
-			processes.mem8 = null;
-			processes.mem16 = null;
 		}
 		currentProcessId = 0;
 	}

@@ -1,3 +1,58 @@
+
+// Allocate 256mb RAM for now.
+var memSize = (1024 * 1024 * 256)|0;
+var totalPages = (memSize / 65536)|0;
+var memory = new ArrayBuffer(memSize);
+
+// We allow a maximum of 1gb of RAM to be allocated, in 64kB pages (16384 pages).
+// This means that we can fit a 32-bit integer for every page, in one page.
+// page 0 contains the global page flags
+var mem32 = new Uint32Array(memory);
+
+// Each "thread" needs:
+// * A private area for registers, local state, etc.
+// Each process needs:
+// * Page table: One page of indexes, one page of flags.
+
+// Reference counters and general information for physical pages.
+var pageRefCountsBuffer = new ArrayBuffer(totalPages * 4);
+var pageRefCounts = new Uint32Array(pageRefCountsBuffer);
+var pageInfo = new Array(totalPages);
+
+function allocatePage() {
+	for (var b = 1; b < totalPages; ++b) {
+		if (pageRefCounts[b] == 0) {
+			pageRefCounts[b]++;
+			return b;
+		}
+	}
+	throw Error("out of memory (no spare pages)");
+}
+
+function duplicatePage(oldpage) {
+	var newpage = allocatePage();
+	// TODO: use .set()?
+	var src = oldpage << 14;
+	var dest = newpage << 14;
+	for (var b = 0; b < 16384; ++b) {
+		mem32[dest++] = mem32[src++];
+	}
+	return newpage;
+}
+
+function zeroPage(pageno) {
+	var dest = pageno << 14;
+	for (var b = 0; b < 16384; ++b)
+		mem32[dest++] = 0;
+}
+
+function freePage(pageno) {
+	if (pageRefCounts[pageno] == 0)
+		throw Error("tried to free page " + pageno + " which isn't in use");
+	zeroPage(pageno); // TODO: only do this when reusing pages
+	pageRefCounts[pageno]--;
+}
+
 function Process() {
 	// note: buffers always initialized to zero
 
@@ -19,30 +74,34 @@ function Process() {
 	this.resultLow = 0;
 	this.resultHigh = 0;
 
+	// Views into global memory.
+	this.mem8 = new Uint8Array(memory);
+	this.mem32 = new Uint32Array(memory);
+
 	this.createMaps = function() {
 		this.registers = new Uint32Array(this.registersBuffer);
 		this.fpregs32 = new Float32Array(this.registersBuffer);
 		this.fpregs64 = new Float64Array(this.registersBuffer);
-		this.mem8 = new Uint8Array(this.memory);
-		this.mem32 = new Uint32Array(this.memory);
-		this.pagemap = new Uint16Array(this.pagemapBuffer);
+		this.pagemap = new Uint16Array(memory, this.pagemapPage << 16, 32768);
 	}
 
 	this.initMemory = function() {
-		// Allocate 80mb RAM for now.
-		this.memory = new ArrayBuffer(1024 * 1024 * 80);
-
-		// 64kB "pages", 2gb userspace
-		this.pagemapBuffer = new ArrayBuffer(32768 * 2);
-		this.nextAvailPage = 1; // FIXME: write an allocator
+		this.pagemapPage = allocatePage();
 
 		// TODO: think about this
 		this.mmapHackStart = 0x9000000;
+
+		this.optOldPage = 0xffffffff >>> 0;
+		this.optOldAddr = 0xffffffff >>> 0;
 
 		this.brk = 0;
 		this.tlsAddr = 0;
 
 		this.createMaps();
+
+		for (var n = 0; n < this.pagemap.length; ++n) {
+			this.pagemap[n] = 0;
+		}
 	}
 
 	this.initMemory();
@@ -88,13 +147,15 @@ if (typeof window == 'undefined') {
 		this.oldPendingBranch = source.oldPendingBranch;
 
 		// XXX
-		this.nextAvailPage = source.nextAvailPage;
 		this.mmapHackStart = source.mmapHackStart;
 
 		this.registersBuffer = source.registersBuffer.slice(0);
-		this.memory = source.memory.slice(0);
-		this.pagemapBuffer = source.pagemapBuffer.slice(0);
 		this.createMaps();
+		// FIXME: be smarter
+		for (var n = 0; n < this.pagemap.length; ++n) {
+			if (source.pagemap[n])
+				this.pagemap[n] = duplicatePage(source.pagemap[n]);
+		}
 
 		this.resultLow = source.resultLow;
 		this.resultHigh = source.resultHigh;
@@ -114,6 +175,16 @@ if (typeof window == 'undefined') {
 		}
 
 		// TODO: ids
+	}
+
+	this.freeResources = function() {
+		for (var n = 0; n < this.pagemap.length; ++n) {
+			if (this.pagemap[n])
+				freePage(this.pagemap[n]);
+		}
+		freePage(this.pagemapPage);
+		this.pagemapPage = 0;
+		this.pagemap = null;
 	}
 
 	this.closeFds = function() {
@@ -222,13 +293,13 @@ if (typeof window == 'undefined') {
 					// FIXME: allocate memory :)
 					var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
 					if (pageId == 0)
-						this.pagemap[(header.pVAddr + b) >>> 16] = this.nextAvailPage++;
+						this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
 					this.mem8[this.translate(header.pVAddr + b)] = u8a[header.pOffset + b];
 				}
 				for (var b = header.pFileSz; b < header.pMemSz; ++b) {
 					var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
 					if (pageId == 0)
-						this.pagemap[(header.pVAddr + b) >>> 16] = this.nextAvailPage++;
+						this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
 				}
 				break;
 //			case 0x70000000: // PT_MIPS_REGINFO
@@ -276,13 +347,13 @@ if (typeof window == 'undefined') {
 						// FIXME: allocate memory :)
 						var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
 						if (pageId == 0)
-							this.pagemap[(header.pVAddr + b) >>> 16] = this.nextAvailPage++;
+							this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
 						this.mem8[this.translate(header.pVAddr + b)] = iu8a[header.pOffset + b];
 					}
 					for (var b = header.pFileSz; b < header.pMemSz; ++b) {
 						var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
 						if (pageId == 0)
-							this.pagemap[(header.pVAddr + b) >>> 16] = this.nextAvailPage++;
+							this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
 					}
 				break;
 				}
@@ -295,16 +366,16 @@ if (typeof window == 'undefined') {
 		// FIXME: allocate heap, stack
 		this.brk = 0x8000000;
 		for (var p = 0; p < 100; ++p)
-			this.pagemap[0x800 + p] = this.nextAvailPage++;
+			this.pagemap[0x800 + p] = allocatePage();
 
 		// In practice, not even a single page of the stack seems to generally be used.
 		var sp = 0xc000ff0;
 		for (var p = 0; p < 10; ++p)
-			this.pagemap[0xc00 - p] = this.nextAvailPage++;
+			this.pagemap[0xc00 - p] = allocatePage();
 
 		// XXX hack for args
 		var dummy = 0xb000000;
-		this.pagemap[0xb00] = this.nextAvailPage++;
+		this.pagemap[0xb00] = allocatePage();
 		var argp = new Array();
 		var envpp = new Array();
 

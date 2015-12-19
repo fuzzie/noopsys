@@ -204,7 +204,7 @@ function sys_mmap_core(proc, ispgoffset) {
 		//if (proc.pagemap[pageid])
 		//	throw Error("page " + pageid + " already allocated");
 		if (!proc.pagemap[pageid])
-			proc.pagemap[pageid] = proc.nextAvailPage++;
+			proc.pagemap[pageid] = allocatePage();
 	}
 
 	if (flags & MAP_ANONYMOUS) {
@@ -1053,6 +1053,7 @@ function sys_execve(proc) {
 	// TODO: reset signals
 	// TODO: close close-on-exec fds
 	// TODO: other stuff (registers? elf loader should zero them)
+	proc.freeResources();
 	proc.initMemory();
 
 	// FIXME
