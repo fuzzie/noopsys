@@ -6,7 +6,6 @@ var memory = new ArrayBuffer(memSize);
 
 // We allow a maximum of 1gb of RAM to be allocated, in 64kB pages (16384 pages).
 // This means that we can fit a 32-bit integer for every page, in one page.
-// page 0 contains the global page flags
 var mem32 = new Uint32Array(memory);
 
 // Each "thread" needs:
@@ -19,8 +18,13 @@ var pageRefCountsBuffer = new ArrayBuffer(totalPages * 4);
 var pageRefCounts = new Uint32Array(pageRefCountsBuffer);
 var pageInfo = new Array(totalPages);
 
+// page 0 contains the global page flags
+pageRefCounts[0]++;
+// page 1 is the zero page
+pageRefCounts[1]++;
+
 function allocatePage() {
-	for (var b = 1; b < totalPages; ++b) {
+	for (var b = 2; b < totalPages; ++b) {
 		if (pageRefCounts[b] == 0) {
 			pageRefCounts[b]++;
 			return b;
@@ -83,16 +87,20 @@ function Process() {
 		this.fpregs32 = new Float32Array(this.registersBuffer);
 		this.fpregs64 = new Float64Array(this.registersBuffer);
 		this.pagemap = new Uint16Array(memory, this.pagemapPage << 16, 32768);
+		this.pageflags = new Uint16Array(memory, this.pageflagsPage << 16, 32768);
 	}
 
 	this.initMemory = function() {
 		this.pagemapPage = allocatePage();
+		this.pageflagsPage = allocatePage();
 
 		// TODO: think about this
 		this.mmapHackStart = 0x9000000;
 
 		this.optOldPage = 0xffffffff >>> 0;
+		this.optOldCodePage = 0xffffffff >>> 0;
 		this.optOldAddr = 0xffffffff >>> 0;
+		this.optOldCodeAddr = 0xffffffff >>> 0;
 
 		this.brk = 0;
 		this.tlsAddr = 0;
@@ -101,6 +109,7 @@ function Process() {
 
 		for (var n = 0; n < this.pagemap.length; ++n) {
 			this.pagemap[n] = 0;
+			this.pageflags[n] = 0;
 		}
 	}
 
@@ -137,7 +146,9 @@ if (typeof window == 'undefined') {
 
 	// Attempt at optimisation.
 	this.optOldPage = 0xffffffff >>> 0;
+	this.optOldCodePage = 0xffffffff >>> 0;
 	this.optOldAddr = 0xffffffff >>> 0;
+	this.optOldCodeAddr = 0xffffffff >>> 0;
 
 	this.cloneFrom = function(source) {
 		// Caller is responsible for setting pid/ppid.
@@ -153,8 +164,10 @@ if (typeof window == 'undefined') {
 		this.createMaps();
 		// FIXME: be smarter
 		for (var n = 0; n < this.pagemap.length; ++n) {
-			if (source.pagemap[n])
+			if (source.pagemap[n]) {
 				this.pagemap[n] = duplicatePage(source.pagemap[n]);
+				this.pageflags[n] = source.pageflags[n];
+			}
 		}
 
 		this.resultLow = source.resultLow;
@@ -183,7 +196,9 @@ if (typeof window == 'undefined') {
 				freePage(this.pagemap[n]);
 		}
 		freePage(this.pagemapPage);
+		freePage(this.pageflagsPage);
 		this.pagemapPage = 0;
+		this.pageflagsPage = 0;
 		this.pagemap = null;
 	}
 
@@ -219,9 +234,14 @@ if (typeof window == 'undefined') {
 		return v >>> 0;
 	}
 
+	this.read8 = function(addr) {
+		var v = this.mem8[this.translate(addr)];
+		return v >>> 0;
+	}
+
 	this.write8 = function(addr, value) {
 		// FIXME 
-		this.mem8[this.translate(addr)] = value;
+		this.mem8[this.translate(addr)] = value & 0xff;
 	}
 
 	this.write16 = function(addr, value) {
@@ -475,7 +495,19 @@ if (typeof window == 'undefined') {
 		}
 	};
 
-	this.translate = function(addr) {
+	this.translate = function(addr, isCode) {
+		// If this.optOldAddr contains the higher bits of addr, we're still using the same page.
+		// In this case, we can use a heap address directly and avoid translation.
+		// XXX: This doesn't account for page table changing from under us, etc.
+		if (isCode) {
+			if ((addr >>> 16) == this.optOldCodeAddr)
+				return this.optOldCodePage + (addr & 0xffff);
+		} else {
+			if ((addr >>> 16) == this.optOldAddr)
+				return this.optOldPage + (addr & 0xffff);
+		}
+		//console.log("miss: " + addr.toString(16));
+
 		// FIXME: make sure this can't happen
 		if (addr < 0)
 			throw Error("you broke it address " + addr.toString(16));
@@ -484,20 +516,20 @@ if (typeof window == 'undefined') {
 		var pageId = this.pagemap[addr >>> 16];
 		if (pageId == 0)
 			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.pc.toString(16));
-		return (pageId << 16) + (addr & 0xffff);
+
+		var pageAddr = pageId << 16;
+		if (isCode) {
+			this.optOldCodePage = pageAddr;
+			this.optOldCodeAddr = addr >>> 16;
+		} else {
+			this.optOldPage = pageAddr;
+			this.optOldAddr = addr >>> 16;
+		}
+		return pageAddr + (addr & 0xffff);
 	}
 
 	this.runOneInst = function() {
-		// If this.optOldAddr contains the higher bits of PC, we're still using the same page.
-		// In this case, we can use a heap address directly and avoid a call to translate.
-		// XXX: This doesn't account for page table changing from under us, etc.
-		var pcaddr = this.optOldPage + (this.pc & 0xffff);
-		if ((this.pc >>> 16) != this.optOldAddr) {
-			pcaddr = this.translate(this.pc);
-			this.optOldPage = pcaddr & 0xffff0000;
-			this.optOldAddr = this.pc >>> 16;
-		}
-
+		var pcaddr = this.translate(this.pc, true);
 		var myInst = this.mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;
@@ -862,7 +894,7 @@ if (typeof window == 'undefined') {
 		case 32: // lb
 			if (rt == 0) break;
 			var addr = this.registers[rs] + simm;
-			var v = this.mem8[this.translate(addr >>> 0)];
+			var v = this.read8(addr);
 			if (v & 0x80) v |= 0xffffff00;
 			this.registers[rt] = v;
 			break;
@@ -932,7 +964,7 @@ if (typeof window == 'undefined') {
 		case 36: // lbu
 			if (rt == 0) break;
 			var addr = this.registers[rs] + simm;
-			var v = this.mem8[this.translate(addr >>> 0)];
+			var v = this.read8(addr);
 			this.registers[rt] = v >>> 0;
 			break;
 		case 40: // sb
@@ -960,13 +992,13 @@ if (typeof window == 'undefined') {
 			//console.log("swl " + this.read32(addr).toString(16));
 			var mask = (addr & 3) ^ 3;
 			var value = this.registers[rt];
-			this.mem8[this.translate(addr >>> 0)] = value >>> 24;
+			this.write8(addr, value >>> 24);
 			if (mask <= 2)
-				this.mem8[this.translate((addr - 1) >>> 0)] = value >>> 16;
+				this.write8(addr - 1, value >>> 16);
 			if (mask <= 1)
-				this.mem8[this.translate((addr - 2) >>> 0)] = value >>> 8;
+				this.write8(addr - 2, value >>> 8);
 			if (mask == 0)
-				this.mem8[this.translate((addr - 3) >>> 0)] = value >>> 0;
+				this.write8(addr - 3, value >>> 0);
 			break;
 		case 46: // swr
 			// FIXME: verify
@@ -983,13 +1015,13 @@ if (typeof window == 'undefined') {
 			//console.log("swr " + this.read32(addr).toString(16));
 			var mask = (addr & 3) ^ 3;
 			var value = this.registers[rt];
-			this.mem8[this.translate(addr >>> 0)] = value >>> 0;
+			this.write8(addr, value >>> 0);
 			if (mask >= 1)
-				this.mem8[this.translate((addr + 1) >>> 0)] = value >>> 8;
+				this.write8(addr + 1, value >>> 8);
 			if (mask >= 2)
-				this.mem8[this.translate((addr + 2) >>> 0)] = value >>> 16;
+				this.write8(addr + 2, value >>> 16);
 			if (mask == 3)
-				this.mem8[this.translate((addr + 3) >>> 0)] = value >>> 24;
+				this.write8(addr + 3, value >>> 24);
 			break;
 		case 43: // sw
 			var addr = this.registers[rs] + simm;

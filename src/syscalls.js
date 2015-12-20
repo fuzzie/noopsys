@@ -318,11 +318,11 @@ function sys_read(proc) {
 	if (ret > 0) {
 		if (typeof file.data == 'string') // XXX :-(
 			for (var n = 0; n < ret; ++n) {
-				proc.mem8[proc.translate(addr + n)] = file.data.charCodeAt(n);
+				proc.write8(addr + n, file.data.charCodeAt(n));
 			}
 		else
 			for (var n = 0; n < ret; ++n) {
-				proc.mem8[proc.translate(addr + n)] = file.data[n];
+				proc.write8(addr + n, file.data[n]);
 			}
 		file.data = file.data.slice(ret); // XXX
 	}
@@ -336,7 +336,7 @@ function sys_write(proc) {
 	var length = proc.registers[6];
 	var str = "";
 	for (var n = 0; n < length; ++n) {
-		str += String.fromCharCode(proc.mem8[proc.translate(addr + n)]);
+		str += String.fromCharCode(proc.read8(addr + n));
 	}
 	//console.log("write '" + str + "' to " + fd + " (" + length + " chars)");
 	// XXX
@@ -905,7 +905,7 @@ function sys_writev(proc) {
 		var length = proc.read32(iov + 8*c + 4);
 		var str = "";
 		for (var n = 0; n < length; ++n) {
-			str += String.fromCharCode(proc.mem8[proc.translate(addr + n)]);
+			str += String.fromCharCode(proc.read8(addr + n));
 			count++;
 		}
 		process.stdout.write(str);
