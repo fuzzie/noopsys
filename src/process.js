@@ -98,8 +98,10 @@ function Process() {
 		this.mmapHackStart = 0x9000000;
 
 		this.optOldPage = 0xffffffff >>> 0;
+		this.optOldWritePage = 0xffffffff >>> 0;
 		this.optOldCodePage = 0xffffffff >>> 0;
 		this.optOldAddr = 0xffffffff >>> 0;
+		this.optOldWriteAddr = 0xffffffff >>> 0;
 		this.optOldCodeAddr = 0xffffffff >>> 0;
 
 		this.brk = 0;
@@ -146,8 +148,10 @@ if (typeof window == 'undefined') {
 
 	// Attempt at optimisation.
 	this.optOldPage = 0xffffffff >>> 0;
+	this.optOldWritePage = 0xffffffff >>> 0;
 	this.optOldCodePage = 0xffffffff >>> 0;
 	this.optOldAddr = 0xffffffff >>> 0;
+	this.optOldWriteAddr = 0xffffffff >>> 0;
 	this.optOldCodeAddr = 0xffffffff >>> 0;
 
 	this.cloneFrom = function(source) {
@@ -211,7 +215,7 @@ if (typeof window == 'undefined') {
 
 	this.read32 = function(addr) {
 		// FIXME 
-		var mapped = this.translate(addr);
+		var mapped = this.translate(addr, PROT_READ);
 		var v = this.mem8[mapped];
 		if ((addr & 0x03) == 0x0) {
 			// TODO: We could also just use mem32...
@@ -219,9 +223,9 @@ if (typeof window == 'undefined') {
 			v += this.mem8[mapped + 2] << 16;
 			v += this.mem8[mapped + 3] << 24;
 		} else {
-			v += this.mem8[this.translate(addr + 1)] << 8;
-			v += this.mem8[this.translate(addr + 2)] << 16;
-			v += this.mem8[this.translate(addr + 3)] << 24;
+			v += this.mem8[this.translate(addr + 1, PROT_READ)] << 8;
+			v += this.mem8[this.translate(addr + 2, PROT_READ)] << 16;
+			v += this.mem8[this.translate(addr + 3, PROT_READ)] << 24;
 		}
 		if (debug) console.log("read " + addr.toString(16) + " (" + v.toString(16) + ")");
 		return v >>> 0;
@@ -229,48 +233,48 @@ if (typeof window == 'undefined') {
 
 	this.read16 = function(addr) {
 		// FIXME 
-		var v = this.mem8[this.translate(addr)];
-		v += this.mem8[this.translate(addr + 1)] << 8;
+		var v = this.mem8[this.translate(addr, PROT_READ)];
+		v += this.mem8[this.translate(addr + 1, PROT_READ)] << 8;
 		return v >>> 0;
 	}
 
 	this.read8 = function(addr) {
-		var v = this.mem8[this.translate(addr)];
+		var v = this.mem8[this.translate(addr, PROT_READ)];
 		return v >>> 0;
 	}
 
 	this.write8 = function(addr, value) {
 		// FIXME 
-		this.mem8[this.translate(addr)] = value & 0xff;
+		this.mem8[this.translate(addr, PROT_WRITE)] = value & 0xff;
 	}
 
 	this.write16 = function(addr, value) {
 		// FIXME 
-		this.mem8[this.translate(addr)] = value & 0xff;
-		this.mem8[this.translate(addr + 1)] = (value >>> 8) & 0xff;
+		this.mem8[this.translate(addr, PROT_WRITE)] = value & 0xff;
+		this.mem8[this.translate(addr + 1, PROT_WRITE)] = (value >>> 8) & 0xff;
 	}
 
 	this.write32 = function(addr, value) {
 		if (debug) console.log("write " + addr.toString(16) + " (" + value.toString(16) + ")");
 		// FIXME
-		this.mem8[this.translate(addr)] = value & 0xff;
-		this.mem8[this.translate(addr + 1)] = (value >>> 8) & 0xff;
-		this.mem8[this.translate(addr + 2)] = (value >>> 16) & 0xff;
-		this.mem8[this.translate(addr + 3)] = (value >>> 24) & 0xff;
+		this.mem8[this.translate(addr, PROT_WRITE)] = value & 0xff;
+		this.mem8[this.translate(addr + 1, PROT_WRITE)] = (value >>> 8) & 0xff;
+		this.mem8[this.translate(addr + 2, PROT_WRITE)] = (value >>> 16) & 0xff;
+		this.mem8[this.translate(addr + 3, PROT_WRITE)] = (value >>> 24) & 0xff;
 	}
 
 	this.copyToUser = function(addr, data, isString) {
 		for (var n = 0; n < data.length; ++n)
-			this.mem8[this.translate(addr++)] = data[n].charCodeAt(0);
+			this.mem8[this.translate(addr++, PROT_WRITE)] = data[n].charCodeAt(0);
 		if (isString)
-			this.mem8[this.translate(addr++)] = 0;
+			this.mem8[this.translate(addr++, PROT_WRITE)] = 0;
 	}
 
 	this.stringFromUser = function(addr) {
 		// FIXME
 		var str = "";
 		while (true) {
-			var v = this.mem8[this.translate(addr++)];
+			var v = this.mem8[this.translate(addr++, PROT_READ)];
 			if (v == 0) break;
 			str += String.fromCharCode(v);
 		}
@@ -314,7 +318,7 @@ if (typeof window == 'undefined') {
 					var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
 					if (pageId == 0)
 						this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
-					this.mem8[this.translate(header.pVAddr + b)] = u8a[header.pOffset + b];
+					this.mem8[this.translate(header.pVAddr + b, PROT_WRITE)] = u8a[header.pOffset + b];
 				}
 				for (var b = header.pFileSz; b < header.pMemSz; ++b) {
 					var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
@@ -368,7 +372,7 @@ if (typeof window == 'undefined') {
 						var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
 						if (pageId == 0)
 							this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
-						this.mem8[this.translate(header.pVAddr + b)] = iu8a[header.pOffset + b];
+						this.mem8[this.translate(header.pVAddr + b, PROT_WRITE)] = iu8a[header.pOffset + b];
 					}
 					for (var b = header.pFileSz; b < header.pMemSz; ++b) {
 						var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
@@ -403,15 +407,15 @@ if (typeof window == 'undefined') {
 			argp.push(dummy);
 			var tmp = argv[a];
 			for (var n = 0; n < tmp.length; ++n)
-				this.mem8[this.translate(dummy++)] = tmp[n].charCodeAt(0);
-			this.mem8[this.translate(dummy++)] = 0;
+				this.mem8[this.translate(dummy++, PROT_WRITE)] = tmp[n].charCodeAt(0);
+			this.mem8[this.translate(dummy++, PROT_WRITE)] = 0;
 		}
 		for (var a = 0; a < envp.length; ++a) {
 			envpp.push(dummy);
 			var tmp = envp[a];
 			for (var n = 0; n < tmp.length; ++n)
-				this.mem8[this.translate(dummy++)] = tmp[n].charCodeAt(0);
-			this.mem8[this.translate(dummy++)] = 0;
+				this.mem8[this.translate(dummy++, PROT_WRITE)] = tmp[n].charCodeAt(0);
+			this.mem8[this.translate(dummy++, PROT_WRITE)] = 0;
 		}
 
 		sp = sp - (17 + argp.length + envpp.length)*4; // FIXME: de-hardcode
@@ -495,13 +499,16 @@ if (typeof window == 'undefined') {
 		}
 	};
 
-	this.translate = function(addr, isCode) {
+	this.translate = function(addr, prot) {
 		// If this.optOldAddr contains the higher bits of addr, we're still using the same page.
 		// In this case, we can use a heap address directly and avoid translation.
 		// XXX: This doesn't account for page table changing from under us, etc.
-		if (isCode) {
+		if (prot == PROT_EXEC) {
 			if ((addr >>> 16) == this.optOldCodeAddr)
 				return this.optOldCodePage + (addr & 0xffff);
+		} else if (prot == PROT_WRITE) {
+			if ((addr >>> 16) == this.optOldWriteAddr)
+				return this.optOldWritePage + (addr & 0xffff);
 		} else {
 			if ((addr >>> 16) == this.optOldAddr)
 				return this.optOldPage + (addr & 0xffff);
@@ -518,9 +525,12 @@ if (typeof window == 'undefined') {
 			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.pc.toString(16));
 
 		var pageAddr = pageId << 16;
-		if (isCode) {
+		if (prot == PROT_EXEC) {
 			this.optOldCodePage = pageAddr;
 			this.optOldCodeAddr = addr >>> 16;
+		} else if (prot == PROT_WRITE) {
+			this.optOldWritePage = pageAddr;
+			this.optOldWriteAddr = addr >>> 16;
 		} else {
 			this.optOldPage = pageAddr;
 			this.optOldAddr = addr >>> 16;
@@ -529,7 +539,7 @@ if (typeof window == 'undefined') {
 	}
 
 	this.runOneInst = function() {
-		var pcaddr = this.translate(this.pc, true);
+		var pcaddr = this.translate(this.pc, PROT_EXEC);
 		var myInst = this.mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;

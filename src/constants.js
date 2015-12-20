@@ -95,6 +95,14 @@ var MAP_NONBLOCK = 0x20000;
 var MAP_STACK = 0x40000;
 var MAP_HUGETLB = 0x80000;
 
+var PROT_NONE = 0x0;
+var PROT_READ = 0x1;
+var PROT_WRITE = 0x2;
+var PROT_EXEC = 0x4;
+
+// Linux-internal
+var VM_SHARED = 0x8;
+
 // fcntl (mips)
 var O_APPEND = 8;
 var O_DSYNC = 0x10;
