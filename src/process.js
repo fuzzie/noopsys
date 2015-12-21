@@ -240,20 +240,15 @@ if (typeof window == 'undefined') {
 	}
 
 	this.read32 = function(addr) {
-		// FIXME 
 		var mapped = this.translate(addr, PROT_READ);
-		var v = this.mem8[mapped];
 		if ((addr & 0x03) == 0x0) {
-			// TODO: We could also just use mem32...
-			v += this.mem8[mapped + 1] << 8;
-			v += this.mem8[mapped + 2] << 16;
-			v += this.mem8[mapped + 3] << 24;
-		} else {
-			v += this.mem8[this.translate(addr + 1, PROT_READ)] << 8;
-			v += this.mem8[this.translate(addr + 2, PROT_READ)] << 16;
-			v += this.mem8[this.translate(addr + 3, PROT_READ)] << 24;
+			return mem32[mapped >> 2];
 		}
-		if (debug) console.log("read " + addr.toString(16) + " (" + v.toString(16) + ")");
+		var v = this.mem8[mapped];
+		v += this.mem8[this.translate(addr + 1, PROT_READ)] << 8;
+		v += this.mem8[this.translate(addr + 2, PROT_READ)] << 16;
+		v += this.mem8[this.translate(addr + 3, PROT_READ)] << 24;
+		//if (debug) console.log("read " + addr.toString(16) + " (" + v.toString(16) + ")");
 		return v >>> 0;
 	}
 
@@ -281,9 +276,13 @@ if (typeof window == 'undefined') {
 	}
 
 	this.write32 = function(addr, value) {
-		if (debug) console.log("write " + addr.toString(16) + " (" + value.toString(16) + ")");
-		// FIXME
-		this.mem8[this.translate(addr, PROT_WRITE)] = value & 0xff;
+		// if (debug) console.log("write " + addr.toString(16) + " (" + value.toString(16) + ")");
+		var mapped = this.translate(addr, PROT_WRITE);
+		if ((addr & 0x03) == 0x0) {
+			mem32[mapped >> 2] = value;
+			return;
+		}
+		this.mem8[mapped] = value & 0xff;
 		this.mem8[this.translate(addr + 1, PROT_WRITE)] = (value >>> 8) & 0xff;
 		this.mem8[this.translate(addr + 2, PROT_WRITE)] = (value >>> 16) & 0xff;
 		this.mem8[this.translate(addr + 3, PROT_WRITE)] = (value >>> 24) & 0xff;
