@@ -191,7 +191,25 @@ function sys_mmap_core(proc, ispgoffset) {
 		//	throw Error("mmap with non-zero addr"); // TODO
 		start = addr;
 	}
+
+	// FIXME: sanity checks etc
+	if (!(flags & MAP_FIXED)) {
+		var isOK = false;
+		while (!isOK) {
+			isOK = true;
+			for (var n = 0; n < pages; ++n) {
+				var pageid = (start >>> 16) + n;
+				if (proc.pagemap[pageid]) {
+					isOK = false;
+					start = pageid << 16;
+					break;
+				}
+			}
+		}
+	}
+
 	//console.log("mmap: decided to allocate at " + start.toString(16));
+
 	// TODO: ugh
 	// We try to leave a gap between mappings to make debugging easier.
 	var gap = 5;
@@ -200,12 +218,23 @@ function sys_mmap_core(proc, ispgoffset) {
 
 	// reserve the pages
 	for (var n = 0; n < pages; ++n) {
-		var pageid = (start>>16) + n;
-		//if (proc.pagemap[pageid])
-		//	throw Error("page " + pageid + " already allocated");
-		if (!proc.pagemap[pageid])
-			proc.pagemap[pageid] = allocatePage();
+		var pageid = (start >>> 16) + n;
+		if (proc.pagemap[pageid])
+			freePage(proc.pagemap[pageid]);
+		if (flags & MAP_ANONYMOUS) {
+			proc.pagemap[pageid] = zeroPage();
+		} else {
+			proc.pagemap[pageid] = allocatePage(prot);
+			// TODO: optimise?
+			doZeroPage(proc.pagemap[pageid]);
+		}
+		proc.pageflags[pageid] = prot;
 	}
+
+	//console.log("after mmap, " + nextAvailPage + " pages used");
+
+	// We might have remapped an in-use page.
+	proc.invalidateHacks();
 
 	if (flags & MAP_ANONYMOUS) {
 		// XXX: is this ok?
@@ -214,11 +243,32 @@ function sys_mmap_core(proc, ispgoffset) {
 
 	// copy the data (alas)
 	// XXX
+	if ((start & 0xffff) != 0x0000) throw Error("unaligned mmap");
 	var u8a = new Uint8Array(file.node.data);
-	for (var n = 0; n < len; ++n) {
-		if (offset + n > file.node.size)
-			break;
-		proc.mem8[proc.translate(start + n)] = u8a[offset + n];
+	for (var n = 0; n < pages; ++n) {
+		// Beware: loop modifies offset and len.
+		if (offset >= file.node.size) break;
+
+		// We can copy a whole page at once.
+		// XXX: is this safe since we called allocatePage ourselves?
+		var targetAddr = proc.translate(start + n*0x10000, PROT_NONE);
+		var count = 0x10000;
+
+		// If we don't need a whole page..
+		if (count > len)
+			count = len;
+		// If we don't have a whole page..
+		if (offset + count > file.node.size)
+			count = file.node.size - offset;
+
+		//console.log("copy " + count + " (offset " + offset + ", size " + file.node.size + ", len " + len + ")");
+		for (var b = 0; b < count; ++b)
+			proc.mem8[targetAddr + b] = u8a[offset++];
+		len -= count;
+
+		// Trying this doesn't improve performance in V8 at least..
+		//proc.mem8.set(u8a.slice(offset, offset + count), targetAddr);
+		//offset += count;
 	}
 
 	return start;
@@ -242,8 +292,24 @@ function sys_madvise(proc) {
 	return 0;
 }
 
-function sys_mprotect() {
-	// FIXME
+function sys_mprotect(proc) {
+	var addr = proc.registers[4];
+	var len = proc.registers[5];
+	var prot = proc.registers[6];
+
+	// FIXME: didn't check whether this even works
+	console.log("mprotect untested!");
+
+	// FIXME: sanity check whether you're allowed to do this...
+
+	var pages = ((len + 0xffff) / 0x10000) >>> 0;
+	for (var n = 0; n < pages; ++n) {
+		var localPageId = (addr << 16) + n;
+		var pageId = proc.pagemap[localPageId];
+		// XXX: bad!
+		proc.pageflags[pageId] = prot;
+	}
+
 	return 0;
 }
 

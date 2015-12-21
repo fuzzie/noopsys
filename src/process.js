@@ -19,22 +19,36 @@ var pageRefCounts = new Uint32Array(pageRefCountsBuffer);
 var pageInfo = new Array(totalPages);
 
 // page 0 contains the global page flags
+var globalPageFlags = new Uint32Array(memory, 16384);
 pageRefCounts[0]++;
 // page 1 is the zero page
 pageRefCounts[1]++;
+globalPageFlags[1] = PROT_READ;
 
-function allocatePage() {
+function allocatePage(flags) {
 	for (var b = 2; b < totalPages; ++b) {
 		if (pageRefCounts[b] == 0) {
 			pageRefCounts[b]++;
+			globalPageFlags[b] = flags;
 			return b;
 		}
 	}
 	throw Error("out of memory (no spare pages)");
 }
 
+function cowDupPage(pageno) {
+	if (pageno == 1)
+		return zeroPage();
+	// FIXME: do something like VM_MAY etc rather than letting guests do as they please
+	globalPageFlags[pageno] |= VM_SHARED;
+	globalPageFlags[pageno] &= (~PROT_WRITE);
+	pageRefCounts[pageno]++;
+	return pageno;
+}
+
 function duplicatePage(oldpage) {
-	var newpage = allocatePage();
+	if (pageRefCounts[oldpage] == 0) throw Error("trying to duplicate page with no refs");
+	var newpage = allocatePage(globalPageFlags[oldpage] & (~VM_SHARED));
 	// TODO: use .set()?
 	var src = oldpage << 14;
 	var dest = newpage << 14;
@@ -44,17 +58,26 @@ function duplicatePage(oldpage) {
 	return newpage;
 }
 
-function zeroPage(pageno) {
+function doZeroPage(pageno) {
+	if (pageRefCounts[pageno] != 1) throw Error("trying to zero page with refs!=1");
 	var dest = pageno << 14;
 	for (var b = 0; b < 16384; ++b)
 		mem32[dest++] = 0;
 }
 
+function zeroPage() {
+	pageRefCounts[1]++;
+	return 1;
+}
+
 function freePage(pageno) {
 	if (pageRefCounts[pageno] == 0)
 		throw Error("tried to free page " + pageno + " which isn't in use");
-	zeroPage(pageno); // TODO: only do this when reusing pages
 	pageRefCounts[pageno]--;
+	if (pageRefCounts[pageno] == 0)
+		globalPageFlags[pageno] = 0;
+	if (pageRefCounts[pageno] == 0 && pageno == 1)
+		throw Error("zero page ended up unreferenced?");
 }
 
 function Process() {
@@ -90,25 +113,30 @@ function Process() {
 		this.pageflags = new Uint16Array(memory, this.pageflagsPage << 16, 32768);
 	}
 
-	this.initMemory = function() {
-		this.pagemapPage = allocatePage();
-		this.pageflagsPage = allocatePage();
-
-		// TODO: think about this
-		this.mmapHackStart = 0x9000000;
-
+	this.invalidateHacks = function() {
 		this.optOldPage = 0xffffffff >>> 0;
 		this.optOldWritePage = 0xffffffff >>> 0;
 		this.optOldCodePage = 0xffffffff >>> 0;
 		this.optOldAddr = 0xffffffff >>> 0;
 		this.optOldWriteAddr = 0xffffffff >>> 0;
 		this.optOldCodeAddr = 0xffffffff >>> 0;
+	}
+
+	this.initMemory = function() {
+		this.pagemapPage = allocatePage(PROT_NONE);
+		this.pageflagsPage = allocatePage(PROT_NONE);
+
+		// TODO: think about this
+		this.mmapHackStart = 0x2000000;
+
+		this.invalidateHacks();
 
 		this.brk = 0;
 		this.tlsAddr = 0;
 
 		this.createMaps();
 
+		// could also just doZeroPage(); both pages..
 		for (var n = 0; n < this.pagemap.length; ++n) {
 			this.pagemap[n] = 0;
 			this.pageflags[n] = 0;
@@ -146,14 +174,6 @@ if (typeof window == 'undefined') {
 
 	this.cwd = "/";
 
-	// Attempt at optimisation.
-	this.optOldPage = 0xffffffff >>> 0;
-	this.optOldWritePage = 0xffffffff >>> 0;
-	this.optOldCodePage = 0xffffffff >>> 0;
-	this.optOldAddr = 0xffffffff >>> 0;
-	this.optOldWriteAddr = 0xffffffff >>> 0;
-	this.optOldCodeAddr = 0xffffffff >>> 0;
-
 	this.cloneFrom = function(source) {
 		// Caller is responsible for setting pid/ppid.
 		this.pc = source.pc;
@@ -169,9 +189,14 @@ if (typeof window == 'undefined') {
 		// FIXME: be smarter
 		for (var n = 0; n < this.pagemap.length; ++n) {
 			if (source.pagemap[n]) {
-				this.pagemap[n] = duplicatePage(source.pagemap[n]);
+				this.pagemap[n] = cowDupPage(source.pagemap[n]);
 				this.pageflags[n] = source.pageflags[n];
 			}
+		}
+
+		// Invalidate everyone's cached page flags (we might have COWed).
+		for (var p = 0; p < processes.length; ++p) {
+			processes[p].invalidateHacks();
 		}
 
 		this.resultLow = source.resultLow;
@@ -204,6 +229,7 @@ if (typeof window == 'undefined') {
 		this.pagemapPage = 0;
 		this.pageflagsPage = 0;
 		this.pagemap = null;
+		this.pageflags = null;
 	}
 
 	this.closeFds = function() {
@@ -282,6 +308,14 @@ if (typeof window == 'undefined') {
 	}
 
 	this.loadElf = function(buffer, argv, envp) {
+		function makeProtFlags(pFlags) {
+			var r = 0;
+			if (pFlags & 0x1) r |= PROT_EXEC;
+			if (pFlags & 0x2) r |= PROT_WRITE;
+			if (pFlags & 0x4) r |= PROT_READ;
+			return r;
+		}
+
 		// XXX: sigh
 		if (typeof buffer == 'string') {
 			var tmpbuf = new ArrayBuffer(buffer.length);
@@ -316,14 +350,20 @@ if (typeof window == 'undefined') {
 				for (var b = 0; b < header.pFileSz; ++b) {
 					// FIXME: allocate memory :)
 					var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
-					if (pageId == 0)
-						this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
-					this.mem8[this.translate(header.pVAddr + b, PROT_WRITE)] = u8a[header.pOffset + b];
+					if (pageId == 1) throw Error("elf loader overlap bug");
+					if (pageId == 0) {
+						this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage(makeProtFlags(header.pFlags));
+						doZeroPage(this.pagemap[(header.pVAddr + b) >>> 16]); // TODO: only if needed
+						this.pageflags[(header.pVAddr + b) >>> 16] = makeProtFlags(header.pFlags);
+					}
+					this.mem8[this.translate(header.pVAddr + b, PROT_NONE)] = u8a[header.pOffset + b];
 				}
 				for (var b = header.pFileSz; b < header.pMemSz; ++b) {
 					var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
-					if (pageId == 0)
-						this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
+					if (pageId == 0) {
+						this.pagemap[(header.pVAddr + b) >>> 16] = zeroPage();
+						this.pageflags[(header.pVAddr + b) >>> 16] = makeProtFlags(header.pFlags);
+					}
 				}
 				break;
 //			case 0x70000000: // PT_MIPS_REGINFO
@@ -370,14 +410,20 @@ if (typeof window == 'undefined') {
 					for (var b = 0; b < header.pFileSz; ++b) {
 						// FIXME: allocate memory :)
 						var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
-						if (pageId == 0)
-							this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
-						this.mem8[this.translate(header.pVAddr + b, PROT_WRITE)] = iu8a[header.pOffset + b];
+						if (pageId == 1) throw Error("elf loader overlap bug");
+						if (pageId == 0) {
+							this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage(makeProtFlags(header.pFlags));
+							doZeroPage(this.pagemap[(header.pVAddr + b) >>> 16]); // TODO: only if needed
+							this.pageflags[(header.pVAddr + b) >>> 16] = makeProtFlags(header.pFlags);
+						}
+						this.mem8[this.translate(header.pVAddr + b, PROT_NONE)] = iu8a[header.pOffset + b];
 					}
 					for (var b = header.pFileSz; b < header.pMemSz; ++b) {
 						var pageId = this.pagemap[(header.pVAddr + b) >>> 16];
-						if (pageId == 0)
-							this.pagemap[(header.pVAddr + b) >>> 16] = allocatePage();
+						if (pageId == 0) {
+							this.pagemap[(header.pVAddr + b) >>> 16] = zeroPage();
+							this.pageflags[(header.pVAddr + b) >>> 16] = makeProtFlags(header.pFlags);
+						}
 					}
 				break;
 				}
@@ -389,17 +435,23 @@ if (typeof window == 'undefined') {
 
 		// FIXME: allocate heap, stack
 		this.brk = 0x8000000;
-		for (var p = 0; p < 100; ++p)
-			this.pagemap[0x800 + p] = allocatePage();
+		for (var p = 0; p < 100; ++p) {
+			this.pagemap[0x800 + p] = zeroPage();
+			this.pageflags[0x800 + p] = PROT_READ | PROT_WRITE;
+		}
 
 		// In practice, not even a single page of the stack seems to generally be used.
+		// FIXME: stack flags?
 		var sp = 0xc000ff0;
-		for (var p = 0; p < 10; ++p)
-			this.pagemap[0xc00 - p] = allocatePage();
+		for (var p = 0; p < 10; ++p) {
+			this.pagemap[0xc00 - p] = zeroPage();
+			this.pageflags[0xc00 - p] = PROT_READ | PROT_WRITE;
+		}
 
 		// XXX hack for args
 		var dummy = 0xb000000;
-		this.pagemap[0xb00] = allocatePage();
+		this.pagemap[0xb00] = zeroPage();
+		this.pageflags[0xb00] = PROT_READ | PROT_WRITE; // XXX?
 		var argp = new Array();
 		var envpp = new Array();
 
@@ -513,16 +565,56 @@ if (typeof window == 'undefined') {
 			if ((addr >>> 16) == this.optOldAddr)
 				return this.optOldPage + (addr & 0xffff);
 		}
-		//console.log("miss: " + addr.toString(16));
+
+		return this.translateMiss(addr, prot);
+	}
+
+	this.translateMiss = function(addr, prot) {
+		//console.log(this.pid + " miss: " + addr.toString(16) + " (prot " + prot + ")");
 
 		// FIXME: make sure this can't happen
 		if (addr < 0)
 			throw Error("you broke it address " + addr.toString(16));
 		if (addr >= 0x80000000)
 			throw Error("bad address " + addr.toString(16) + " at pc " + this.pc.toString(16));
-		var pageId = this.pagemap[addr >>> 16];
+		var localPageId = addr >>> 16;
+
+		if ((this.pageflags[localPageId] & prot) != prot) {
+			// "real" fault
+			throw Error("fault at " + addr.toString(16) + " at pc " + this.pc.toString(16) + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
+		}
+
+		var pageId = this.pagemap[localPageId];
 		if (pageId == 0)
 			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.pc.toString(16));
+
+		var pageFlags = globalPageFlags[pageId];
+		if ((pageFlags & prot) != prot) {
+			var oldPageId = pageId;
+
+			// Fault, but our local flags say this is okay.
+			if ((prot == PROT_WRITE) && (pageFlags & VM_SHARED)) {
+				//console.log(this.pid + " hit vm_shared page@" + addr.toString(16) + ", refcount " + pageRefCounts[pageId]);
+				// We can fix this by doing COW.
+				if (pageRefCounts[pageId] != 1) {
+					// We only need to actually do the copy if there are other users.
+					pageId = duplicatePage(pageId);
+					freePage(oldPageId);
+					this.pagemap[localPageId] = pageId;
+				}
+				globalPageFlags[pageId] = this.pageflags[localPageId];
+			} else if ((prot == PROT_WRITE) && (pageId == 1)) {
+				// Zero page. Duplicate it.
+				pageId = allocatePage(this.pageflags[localPageId]);
+				//console.log("dup zero page at " + addr.toString(16) + " --> " + pageId);
+				freePage(oldPageId);
+				doZeroPage(pageId);
+				this.pagemap[localPageId] = pageId;
+			} else {
+				// We don't know how to deal with this.
+				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.pc.toString(16));
+			}
+		}
 
 		var pageAddr = pageId << 16;
 		if (prot == PROT_EXEC) {
