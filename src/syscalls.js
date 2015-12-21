@@ -396,8 +396,11 @@ function sys_read(proc) {
 }
 
 function sys_write(proc) {
-	// FIXME: sanity-check fd
 	var fd = proc.registers[4];
+	if (!proc.fds[fd]) {
+		return -EBADF;
+	}
+
 	var addr = proc.registers[5];
 	var length = proc.registers[6];
 	var str = "";
@@ -1070,7 +1073,7 @@ function sys_clone(proc) {
 
 function sys_execve(proc) {
 	var filenamep = proc.registers[4];
-	filename = proc.stringFromUser(filenamep);
+	var filename = proc.stringFromUser(filenamep);
 	if (filename === "/proc/self/exe") // XXX: horrible horrible FIXME XXX
 		filename = "/bin/busybox";
 	var argv = proc.registers[5];
