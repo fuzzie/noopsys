@@ -762,6 +762,43 @@ if (typeof window == 'undefined') {
 		return;
 	}
 
+	this.signedMult = function(a, b) {
+		// From Hacker's Delight, in an attempt to make this work.
+		// (This seems correct now.)
+		var u1 = (a & 0xffff) >>> 0;
+		var v1 = (b & 0xffff) >>> 0;
+		var u0 = (a >> 16);
+		var v0 = (b >> 16);
+		var t = (((u1 * v1) >>> 0) & 0xffffffff) >>> 0;
+		var w3 = (t & 0xffff) >>> 0;
+		var k = t >>> 16;
+		t = (((u0*v1 + k) >>> 0) & 0xffffffff) >>> 0;
+		var w2 = (t & 0xffff) >>> 0;
+		var w1 = (t >> 16) >>> 0;
+		var t = (((u1*v0 + w2) >>> 0) & 0xffffffff) >>> 0;
+		k = (t >> 16) >>> 0;
+		this.resultLow = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
+		// line below is wrong :/
+		//this.resultLow = (((this.registers[rt] >> 0) * (this.registers[rs] >> 0)) & 0xffffffff) >>> 0;
+		this.resultHigh = (((u0*v0 + w1 + k) >>> 0) & 0xffffffff) >>> 0;
+		//console.log("assert " + (this.registers[rs] >> 0) + " * " + (this.registers[rt] >> 0) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8)); // note you have to postprocess this for negative numbers :p
+	}
+
+	this.unsignedMult = function(a, b) {
+		var tl = a & 0xffff;
+		var sl = b & 0xffff;
+		var th = (a >>> 16) & 0xffff;
+		var sh = (b >>> 16) & 0xffff;
+		var low = tl * sl;
+		var mid = (th * sl) + (sh * tl);
+		var tmp = mid + (low >>> 16);
+		this.resultLow = ((((mid << 16) + low) >>> 0) & 0xffffffff) >>> 0;
+		this.resultHigh = (th * sh) + (tmp >>> 16);
+		if (tmp > 0xffffffff) this.resultHigh += 0x10000;
+		this.resultHigh = this.resultHigh >>> 0;
+		//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
+	}
+
 	this.runOneInst = function() {
 		var pcaddr = this.translate(this.pc, PROT_EXEC);
 		var myInst = mem32[pcaddr >>> 2];
@@ -857,42 +894,12 @@ if (typeof window == 'undefined') {
 				throw Error(); // FIXME
 				break;
 			case 24: // mult
-				// From Hacker's Delight, in an attempt to make this work.
-				// (This seems correct now.)
-				var u1 = (this.registers[rt] & 0xffff) >>> 0;
-				var v1 = (this.registers[rs] & 0xffff) >>> 0;
-				var u0 = (this.registers[rt] >> 16);
-				var v0 = (this.registers[rs] >> 16);
-				var t = (((u1 * v1) >>> 0) & 0xffffffff) >>> 0;
-				var w3 = (t & 0xffff) >>> 0;
-				var k = t >>> 16;
-				t = (((u0*v1 + k) >>> 0) & 0xffffffff) >>> 0;
-				var w2 = (t & 0xffff) >>> 0;
-				var w1 = (t >> 16) >>> 0;
-				var t = (((u1*v0 + w2) >>> 0) & 0xffffffff) >>> 0;
-				k = (t >> 16) >>> 0;
-				this.resultLow = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
-				// line below is wrong :/
-				//this.resultLow = (((this.registers[rt] >> 0) * (this.registers[rs] >> 0)) & 0xffffffff) >>> 0;
-				this.resultHigh = (((u0*v0 + w1 + k) >>> 0) & 0xffffffff) >>> 0;
-				//console.log("assert " + (this.registers[rs] >> 0) + " * " + (this.registers[rt] >> 0) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8)); // note you have to postprocess this for negative numbers :p
+				this.signedMult(this.registers[rt], this.registers[rs]);
 				break;
 			case 25: // multu
-				var tl = this.registers[rt] & 0xffff;
-				var sl = this.registers[rs] & 0xffff;
-				var th = (this.registers[rt] >>> 16) & 0xffff;
-				var sh = (this.registers[rs] >>> 16) & 0xffff;
-				var low = tl * sl;
-				var mid = (th * sl) + (sh * tl);
-				var tmp = mid + (low >>> 16);
-				this.resultLow = ((((mid << 16) + low) >>> 0) & 0xffffffff) >>> 0;
-				this.resultHigh = (th * sh) + (tmp >>> 16);
-				if (tmp > 0xffffffff) this.resultHigh += 0x10000;
-				this.resultHigh = this.resultHigh >>> 0;
-				//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
+				this.unsignedMult(this.registers[rt], this.registers[rs]);
 				break;
 			case 26: // div
-				// FIXME: not tested
 				if (this.registers[rt] == 0)
 					break; // undefined
 				this.resultLow = ((this.registers[rs] >> 0) / (this.registers[rt] >> 0)) >>> 0;
@@ -903,10 +910,6 @@ if (typeof window == 'undefined') {
 					break; // undefined
 				this.resultLow = (this.registers[rs] / this.registers[rt]) >>> 0;
 				this.resultHigh = (this.registers[rs] % this.registers[rt]) >>> 0;
-				//console.log("assert (" + this.registers[rs] + " / " + this.registers[rt] + ")== " + this.resultLow);
-				//console.log("assert (" + this.registers[rs] + " % " + this.registers[rt] + ")== " + this.resultHigh);
-				// Javascript's modulo is weird, might need to use the following for div?
-				// this.resultHigh = ((this.registers[rs] % this.registers[rt]) + this.registers[rt]) % this.registers[rt];
 				break;
 			case 32: // add
 				throw Error(); // FIXME
