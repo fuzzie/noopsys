@@ -1,4 +1,4 @@
-SRCS = src/constants.js src/noopfs.js src/squashfs.js src/syscalls.js src/elf.js src/process.js src/startup.js
+SRCS = external/localforage.min.js src/constants.js src/noopfs.js src/squashfs.js src/syscalls.js src/elf.js src/process.js src/startup.js
 
 all: noopsys.js
 

@@ -94,15 +94,25 @@ if (typeof window == 'undefined') {
 	function goEmulatorGo(term) {
 		terminalObj = term;
 
-		printk("ajaxfs: retrieving filesystem\n");
-		var xhr = new XMLHttpRequest();
-		xhr.onload = function() {
-			printk("ajaxfs: done\n");
-			fsRoot.children['bin'].children['busybox'].data = xhr.response;
-			emuStart();
-		}
-		xhr.responseType = "arraybuffer";
-		xhr.open("GET", "busybox", true);
-		xhr.send();
+		localforage.getItem('rootfs', function(err, value) {
+			if (value) {
+				printk("ajaxfs: found in local storage\n");
+				fsRoot = new SquashFS(value).root;
+				emuStart();
+				return;
+			}
+
+			printk("ajaxfs: retrieving filesystem\n");
+			var xhr = new XMLHttpRequest();
+			xhr.onload = function() {
+				printk("ajaxfs: download complete\n");
+				localforage.setItem('rootfs', xhr.response);
+				fsRoot = new SquashFS(xhr.response).root;
+				emuStart();
+			}
+			xhr.responseType = "arraybuffer";
+			xhr.open("GET", "debian.squashfs", true);
+			xhr.send();
+		});
 	}
 }
