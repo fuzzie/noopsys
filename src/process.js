@@ -24,9 +24,26 @@ pageRefCounts[0]++;
 // page 1 is the zero page
 pageRefCounts[1]++;
 globalPageFlags[1] = PROT_READ;
+// pages 2-9 are used for process state (512 bytes = 128 processes per page)
+var stateEntriesInUse = new Array(128 * 8);
+const firstFreePage = 10;
+
+function allocateStateEntry() {
+	for (var p = 0; p < stateEntriesInUse.length; ++p) {
+		if (!stateEntriesInUse[p]) {
+			stateEntriesInUse[p] = true;
+			return p;
+		}
+	}
+	throw Error("too many processes");
+}
+
+function freeStateEntry(p) {
+	stateEntriesInUse[p] = false;
+}
 
 function allocatePage(flags) {
-	for (var b = 2; b < totalPages; ++b) {
+	for (var b = firstFreePage; b < totalPages; ++b) {
 		if (pageRefCounts[b] == 0) {
 			pageRefCounts[b]++;
 			globalPageFlags[b] = flags;
@@ -80,37 +97,40 @@ function freePage(pageno) {
 		throw Error("zero page ended up unreferenced?");
 }
 
+// MIPS has 32 normal and 32 fp registers.
+var STATE_PC = 64;
+var STATE_OLDPC = 65;
+var STATE_PENDINGBRANCH = 66;
+var STATE_OLDPENDINGBRANCH = 67;
+var STATE_REG_LOW = 68;
+var STATE_REG_HIGH = 69;
+
+var STATE_COPY_COUNT = 70; // state copied in clone()
+
+// pointers into memory
+var STATE_PAGEMAP = 70;
+var STATE_PAGEFLAGS = 71;
+
 function Process() {
 	// note: buffers always initialized to zero
 
-	// Registers: MIPS has 32, plus 32 fp = 64.
-	this.registersBuffer = new ArrayBuffer(64 * 4);
-	this.registers = new Uint32Array(this.registersBuffer);
+	// We don't allow mappings at NULL, so pendingbranch zero is 'no branch'.
 
-	// Registers: Plus the PC, and we handle delayed branches here too.
-	this.pc = 0;
-	// We don't allow mappings at NULL.
-	this.pendingBranch = 0;
-
-	// To simplify blocking system calls, we store these so we can revert back.
+	// To simplify blocking system calls, we store oldpc/pendingbranch so we can revert back.
 	// (The real kernel also re-executes branches; see kernel/branch.c)
-	this.oldpc = 0;
-	this.oldPendingBranch = 0;
-
-	// Registers: Plus the lo/hi ones.
-	this.resultLow = 0;
-	this.resultHigh = 0;
 
 	// Views into global memory.
 	this.mem8 = new Uint8Array(memory);
 	this.mem32 = new Uint32Array(memory);
 
 	this.createMaps = function() {
-		this.registers = new Uint32Array(this.registersBuffer);
-		this.fpregs32 = new Float32Array(this.registersBuffer);
-		this.fpregs64 = new Float64Array(this.registersBuffer);
 		this.pagemap = new Uint16Array(memory, this.pagemapPage << 16, 32768);
 		this.pageflags = new Uint16Array(memory, this.pageflagsPage << 16, 32768);
+
+		this.state = new Uint32Array(memory, this.stateOffset);
+		this.registers = new Uint32Array(memory, this.stateOffset);
+		this.fpregs32 = new Float32Array(memory, this.stateOffset);
+		this.fpregs64 = new Float64Array(memory, this.stateOffset);
 	}
 
 	this.invalidateHacks = function() {
@@ -123,6 +143,9 @@ function Process() {
 	}
 
 	this.initMemory = function() {
+		this.stateEntry = allocateStateEntry();
+		this.stateOffset = (2 * 0x10000 + 512 * this.stateEntry) >>> 0;
+
 		this.pagemapPage = allocatePage(PROT_NONE);
 		this.pageflagsPage = allocatePage(PROT_NONE);
 
@@ -135,6 +158,12 @@ function Process() {
 		this.tlsAddr = 0;
 
 		this.createMaps();
+
+		for (var n = 0; n < STATE_COPY_COUNT; ++n) {
+			this.state[n] = 0;
+		}
+		this.state[STATE_PAGEMAP] = this.pagemapPage << 16;
+		this.state[STATE_PAGEFLAGS] = this.pageflagsPage << 16;
 
 		// could also just doZeroPage(); both pages..
 		for (var n = 0; n < this.pagemap.length; ++n) {
@@ -176,16 +205,15 @@ if (typeof window == 'undefined') {
 
 	this.cloneFrom = function(source) {
 		// Caller is responsible for setting pid/ppid.
-		this.pc = source.pc;
-		this.pendingBranch = source.pendingBranch;
-		this.oldpc = source.oldpc;
-		this.oldPendingBranch = source.oldPendingBranch;
 
 		// XXX
 		this.mmapHackStart = source.mmapHackStart;
 
-		this.registersBuffer = source.registersBuffer.slice(0);
 		this.createMaps();
+		for (var n = 0; n < STATE_COPY_COUNT; ++n) {
+			this.state[n] = source.state[n];
+		}
+
 		// FIXME: be smarter
 		for (var n = 0; n < this.pagemap.length; ++n) {
 			if (source.pagemap[n]) {
@@ -198,9 +226,6 @@ if (typeof window == 'undefined') {
 		for (var p = 0; p < processes.length; ++p) {
 			processes[p].invalidateHacks();
 		}
-
-		this.resultLow = source.resultLow;
-		this.resultHigh = source.resultHigh;
 
 		this.brk = source.brk;
 		this.tlsAddr = source.tlsAddr;
@@ -230,6 +255,12 @@ if (typeof window == 'undefined') {
 		this.pageflagsPage = 0;
 		this.pagemap = null;
 		this.pageflags = null;
+
+		freeStateEntry(this.stateEntry);
+		this.stateEntry = null;
+		this.stateOffset = null;
+		this.state = null;
+		this.registers = null;
 	}
 
 	this.closeFds = function() {
@@ -379,8 +410,8 @@ if (typeof window == 'undefined') {
 		if (elf.objType == ET_DYN)
 			elf.entryPoint += load_bias;
 
-		this.pc = elf.entryPoint;
-		this.pendingBranch = 0;
+		this.registers[STATE_PC] = elf.entryPoint;
+		this.registers[STATE_PENDINGBRANCH] = 0;
 
 		// FIXME: handle elf intepreter case
 		if (elf.elf_interpreter.length) {
@@ -429,7 +460,7 @@ if (typeof window == 'undefined') {
 			}
 
 			// XXX: ugly hack again (see above)
-			this.pc = elf_interp.entryPoint + 0x10000;
+			this.registers[STATE_PC] = elf_interp.entryPoint + 0x10000;
 		}
 
 		// FIXME: allocate heap, stack
@@ -579,17 +610,17 @@ if (typeof window == 'undefined') {
 		if (addr < 0)
 			throw Error("you broke it address " + addr.toString(16));
 		if (addr >= 0x80000000)
-			throw Error("bad address " + addr.toString(16) + " at pc " + this.oldpc.toString(16));
+			throw Error("bad address " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
 		var localPageId = addr >>> 16;
 
 		if ((this.pageflags[localPageId] & prot) != prot) {
 			// "real" fault
-			throw Error("fault at " + addr.toString(16) + " at pc " + this.oldpc.toString(16) + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
+			throw Error("fault at " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16) + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
 		}
 
 		var pageId = this.pagemap[localPageId];
 		if (pageId == 0)
-			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.oldpc.toString(16));
+			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
 
 		var pageFlags = globalPageFlags[pageId];
 		if ((pageFlags & prot) != prot) {
@@ -615,7 +646,7 @@ if (typeof window == 'undefined') {
 				this.pagemap[localPageId] = pageId;
 			} else {
 				// We don't know how to deal with this.
-				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.oldpc.toString(16));
+				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
 			}
 		}
 
@@ -656,9 +687,9 @@ if (typeof window == 'undefined') {
 			var likely = ft & 0x2;
 			var bit = (this.registers[63] >> 23) & 0x1;
 			if (ifTrue == bit) {
-				this.pendingBranch = this.pc + (simm << 2);
+				this.registers[STATE_PENDINGBRANCH] = this.registers[STATE_PC] + (simm << 2);
 			} else if (likely) {
-				this.pc = this.pc + 4;
+				this.registers[STATE_PC] = this.registers[STATE_PC] + 4;
 			}
 			return;
 		}
@@ -721,9 +752,9 @@ if (typeof window == 'undefined') {
 		case 33: // cvt.d
 			if (fmt != 16 && fmt != 20) throw Error("cvt.d: unknown fp fmt " + fmt);
 			if (fmt == 16)
-				this.fpregs64[32 + fd] = this.fpregs32[32 + fs];
+				this.fpregs64[(32 + fd) << 1] = this.fpregs32[32 + fs];
 			else
-				this.fpregs64[32 + fd] = (this.registers[32 + fs] >> 0);
+				this.fpregs64[(32 + fd) << 1] = (this.registers[32 + fs] >> 0);
 			break;
 		default:
 			if (subOpcodeS & 0x30) {
@@ -781,10 +812,10 @@ if (typeof window == 'undefined') {
 		var w1 = (t >> 16) >>> 0;
 		var t = (((u1*v0 + w2) >>> 0) & 0xffffffff) >>> 0;
 		k = (t >> 16) >>> 0;
-		this.resultLow = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
+		this.registers[STATE_REG_LOW] = ((((t << 16) + w3) >>> 0) & 0xffffffff) >>> 0;
 		// line below is wrong :/
 		//this.resultLow = (((this.registers[rt] >> 0) * (this.registers[rs] >> 0)) & 0xffffffff) >>> 0;
-		this.resultHigh = (((u0*v0 + w1 + k) >>> 0) & 0xffffffff) >>> 0;
+		this.registers[STATE_REG_HIGH] = (((u0*v0 + w1 + k) >>> 0) & 0xffffffff) >>> 0;
 		//console.log("assert " + (this.registers[rs] >> 0) + " * " + (this.registers[rt] >> 0) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8)); // note you have to postprocess this for negative numbers :p
 	}
 
@@ -796,15 +827,17 @@ if (typeof window == 'undefined') {
 		var low = tl * sl;
 		var mid = (th * sl) + (sh * tl);
 		var tmp = mid + (low >>> 16);
-		this.resultLow = ((((mid << 16) + low) >>> 0) & 0xffffffff) >>> 0;
-		this.resultHigh = (th * sh) + (tmp >>> 16);
-		if (tmp > 0xffffffff) this.resultHigh += 0x10000;
-		this.resultHigh = this.resultHigh >>> 0;
+		this.registers[STATE_REG_LOW] = ((((mid << 16) + low) >>> 0) & 0xffffffff) >>> 0;
+		this.registers[STATE_REG_HIGH] = (th * sh) + (tmp >>> 16);
+		if (tmp > 0xffffffff) this.registers[STATE_REG_HIGH] += 0x10000;
+		this.registers[STATE_REG_HIGH] = this.registers[STATE_REG_HIGH] >>> 0;
 		//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
 	}
 
 	this.runOneInst = function() {
-		var pcaddr = this.translate(this.pc, PROT_EXEC);
+		var registers = this.registers;
+
+		var pcaddr = this.translate(registers[STATE_PC], PROT_EXEC);
 		var myInst = mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;
@@ -818,23 +851,23 @@ if (typeof window == 'undefined') {
 			simm = -(0x10000 - imm);
 
 		if (debug) {
-			console.log("@" + this.pc.toString(16) + ": inst " + opcode + " (" + myInst.toString(16) + ")" + ", " + subOpcodeS);
+			console.log("@" + registers[STATE_PC].toString(16) + ": inst " + opcode + " (" + myInst.toString(16) + ")" + ", " + subOpcodeS);
 			var debugInfo = "";
 			for (var n = 0; n < 32; ++n)
-				debugInfo = debugInfo + this.registers[n].toString(16) + " ";
+				debugInfo = debugInfo + registers[n].toString(16) + " ";
 			console.log(debugInfo);
 		}
 
-		this.oldpc = this.pc;
-		this.pc += 4;
+		registers[STATE_OLDPC] = registers[STATE_PC];
+		registers[STATE_PC] += 4;
 
 		// delayed branching
-		if (this.pendingBranch) {
-			this.pc = this.pendingBranch >>> 0;
-			this.oldPendingBranch = this.pendingBranch;
-			this.pendingBranch = 0;
+		if (registers[STATE_PENDINGBRANCH]) {
+			registers[STATE_PC] = registers[STATE_PENDINGBRANCH] >>> 0;
+			registers[STATE_OLDPENDINGBRANCH] = registers[STATE_PENDINGBRANCH];
+			registers[STATE_PENDINGBRANCH] = 0;
 		} else
-			this.oldPendingBranch = 0;
+			registers[STATE_OLDPENDINGBRANCH] = 0;
 
 		switch (opcode) {
 		case 0: // special
@@ -842,37 +875,37 @@ if (typeof window == 'undefined') {
 			switch (subOpcodeS) {
 			case 0: // sll
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] << sa) >>> 0;
+				registers[rd] = (registers[rt] << sa) >>> 0;
 				break;
 			case 2: // srl
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] >>> sa;
+				registers[rd] = registers[rt] >>> sa;
 				break;
 			case 3: // sra
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] >> sa) >>> 0;
+				registers[rd] = (registers[rt] >> sa) >>> 0;
 				break;
 			case 4: // sllv
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] << (this.registers[rs] & 0x1f)) >>> 0;
+				registers[rd] = (registers[rt] << (registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 6: // srlv
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] >>> (this.registers[rs] & 0x1f)) >>> 0;
+				registers[rd] = (registers[rt] >>> (registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 7: // srav
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] >> (this.registers[rs] & 0x1f)) >>> 0;
+				registers[rd] = (registers[rt] >> (registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 8: // jr
-				this.pendingBranch = this.registers[rs];
-				if (debug) console.log("--- jmp " + this.pendingBranch.toString(16));
+				registers[STATE_PENDINGBRANCH] = registers[rs];
+				if (debug) console.log("--- jmp " + registers[STATE_PENDINGBRANCH].toString(16));
 				break;
 			case 9: // jalr
-				this.pendingBranch = this.registers[rs];
-				if (showCalls) console.log(this.pc.toString(16) + " --> call " + this.pendingBranch.toString(16));
+				registers[STATE_PENDINGBRANCH] = registers[rs];
+				if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
 				if (rd == 0) break;
-				this.registers[rd] = this.pc + 4;
+				registers[rd] = registers[STATE_PC] + 4;
 				break;
 			case 12: // syscall
 				this.syscall();
@@ -885,83 +918,83 @@ if (typeof window == 'undefined') {
 				break;
 			case 16: // mfhi
 				if (rd == 0) break;
-				this.registers[rd] = this.resultHigh;
+				registers[rd] = registers[STATE_REG_HIGH];
 				break;
 			case 17: // mthi
-				this.resultHigh = this.registers[rs];
+				registers[STATE_REG_HIGH] = registers[rs];
 				break;
 			case 18: // mflo
 				if (rd == 0) break;
-				this.registers[rd] = this.resultLow;
+				registers[rd] = registers[STATE_REG_LOW];
 				break;
 			case 19: // mtlo
-				this.resultLow = this.registers[rs];
+				registers[STATE_REG_LOW] = registers[rs];
 				break;
 			case 24: // mult
-				this.signedMult(this.registers[rt], this.registers[rs]);
+				this.signedMult(registers[rt], registers[rs]);
 				break;
 			case 25: // multu
-				this.unsignedMult(this.registers[rt], this.registers[rs]);
+				this.unsignedMult(registers[rt], registers[rs]);
 				break;
 			case 26: // div
-				if (this.registers[rt] == 0)
+				if (registers[rt] == 0)
 					break; // undefined
-				this.resultLow = ((this.registers[rs] >> 0) / (this.registers[rt] >> 0)) >>> 0;
-				this.resultHigh = ((((this.registers[rs] >> 0) % (this.registers[rt] >> 0)) + (this.registers[rt] >> 0)) % (this.registers[rt] >> 0)) >>> 0;
+				registers[STATE_REG_LOW] = ((registers[rs] >> 0) / (registers[rt] >> 0)) >>> 0;
+				registers[STATE_REG_HIGH] = ((((registers[rs] >> 0) % (registers[rt] >> 0)) + (registers[rt] >> 0)) % (registers[rt] >> 0)) >>> 0;
 				break;
 			case 27: // divu
-				if (this.registers[rt] == 0)
+				if (registers[rt] == 0)
 					break; // undefined
-				this.resultLow = (this.registers[rs] / this.registers[rt]) >>> 0;
-				this.resultHigh = (this.registers[rs] % this.registers[rt]) >>> 0;
+				registers[STATE_REG_LOW] = (registers[rs] / registers[rt]) >>> 0;
+				registers[STATE_REG_HIGH] = (registers[rs] % registers[rt]) >>> 0;
 				break;
 			case 32: // add
 				// FIXME: is this ok? (let's not do the trapping...)
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] + this.registers[rs]) >>> 0;
+				registers[rd] = (registers[rt] + registers[rs]) >>> 0;
 				break;
 			case 33: // addu
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rt] + this.registers[rs]) >>> 0;
+				registers[rd] = (registers[rt] + registers[rs]) >>> 0;
 				break;
 			case 34: // sub
 				// FIXME: is this ok? (let's not do the trapping...)
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rs] - this.registers[rt]) >>> 0;
+				registers[rd] = (registers[rs] - registers[rt]) >>> 0;
 				break;
 			case 35: // subu
 				if (rd == 0) break;
-				this.registers[rd] = (this.registers[rs] - this.registers[rt]) >>> 0;
+				registers[rd] = (registers[rs] - registers[rt]) >>> 0;
 				break;
 			case 36: // and
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] & this.registers[rs];
+				registers[rd] = registers[rt] & registers[rs];
 				break;
 			case 37: // or
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] | this.registers[rs];
+				registers[rd] = registers[rt] | registers[rs];
 				break;
 			case 38: // xor
 				if (rd == 0) break;
-				this.registers[rd] = this.registers[rt] ^ this.registers[rs];
+				registers[rd] = registers[rt] ^ registers[rs];
 				break;
 			case 39: // nor
 				if (rd == 0) break;
-				this.registers[rd] = ~(this.registers[rt] | this.registers[rs]);
+				registers[rd] = ~(registers[rt] | registers[rs]);
 				break;
 			case 42: // slt
 				if (rd == 0) break;
-				if ((this.registers[rs] >> 0) < (this.registers[rt] >> 0))
-					this.registers[rd] = 1;
+				if ((registers[rs] >> 0) < (registers[rt] >> 0))
+					registers[rd] = 1;
 				else
-					this.registers[rd] = 0;
+					registers[rd] = 0;
 				break;
 			case 43: // sltu
 				if (rd == 0) break;
-				if (this.registers[rs] < this.registers[rt])
-					this.registers[rd] = 1;
+				if (registers[rs] < registers[rt])
+					registers[rd] = 1;
 				else
-					this.registers[rd] = 0;
+					registers[rd] = 0;
 				break;
 			case 48: // tge
 				throw Error(); // FIXME
@@ -976,11 +1009,11 @@ if (typeof window == 'undefined') {
 				throw Error(); // FIXME
 				break;
 			case 52: // teq
-				if (this.registers[rs] == this.registers[rt])
+				if (registers[rs] == registers[rt])
 					throw Error("teq");
 				break;
 			case 53: // tne
-				if (this.registers[rs] != this.registers[rt])
+				if (registers[rs] != registers[rt])
 					throw Error("tne");
 				break;
 			default:
@@ -995,7 +1028,7 @@ if (typeof window == 'undefined') {
 				case 29:
 					// TLS pointer.
 					if (rt == 0) break;
-					this.registers[rt] = this.tlsAddr;
+					registers[rt] = this.tlsAddr;
 					break;
 				default:
 					throw new Error("unhandled rdhwr value " + rd);
@@ -1008,36 +1041,36 @@ if (typeof window == 'undefined') {
 		case 1: // regimm
 			switch (rt) {
 			case 0: // bltz
-				if ((this.registers[rs] >> 0) < 0)
-					this.pendingBranch = this.pc + (simm << 2);
+				if ((registers[rs] >> 0) < 0)
+					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 				break;
 			case 1: // bgez
-				if ((this.registers[rs] >> 0) >= 0)
-					this.pendingBranch = this.pc + (simm << 2);
+				if ((registers[rs] >> 0) >= 0)
+					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 				break;
 			case 2: // bltzl
-				if ((this.registers[rs] >> 0) < 0)
-					this.pendingBranch = this.pc + (simm << 2);
+				if ((registers[rs] >> 0) < 0)
+					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 				else
-					this.pc += 4;
+					registers[STATE_PC] += 4;
 				break;
 			case 3: // bgezl
-				if ((this.registers[rs] >> 0) >= 0)
-					this.pendingBranch = this.pc + (simm << 2);
+				if ((registers[rs] >> 0) >= 0)
+					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 				else
-					this.pc += 4;
+					registers[STATE_PC] += 4;
 				break;
 			case 16: // bltzal
-				this.registers[31] = this.pc + 4;
-				if ((this.registers[rs] >> 0) < 0) {
-					this.pendingBranch = this.pc + (simm << 2);
-					if (showCalls) console.log(this.pc.toString(16) + " --> call " + this.pendingBranch.toString(16));
+				registers[31] = registers[STATE_PC] + 4;
+				if ((registers[rs] >> 0) < 0) {
+					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+					if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
 				}
 			case 17: // bgezal
-				this.registers[31] = this.pc + 4;
-				if ((this.registers[rs] >> 0) >= 0) {
-					this.pendingBranch = this.pc + (simm << 2);
-					if (showCalls) console.log(this.pc.toString(16) + " --> call " + this.pendingBranch.toString(16));
+				registers[31] = registers[STATE_PC] + 4;
+				if ((registers[rs] >> 0) >= 0) {
+					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+					if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
 				}
 				break;
 			case 18: // bltzall
@@ -1052,120 +1085,120 @@ if (typeof window == 'undefined') {
 			break;
 		case 2: // j
 			var target = myInst & 0x3ffffff;
-			this.pendingBranch = (this.pc & 0xf0000000) | (target << 2);
+			registers[STATE_PENDINGBRANCH] = (registers[STATE_PC] & 0xf0000000) | (target << 2);
 			break;
 		case 3: // jal
 			var target = myInst & 0x3ffffff;
-			this.pendingBranch = (this.pc & 0xf0000000) | (target << 2);
-			this.registers[31] = this.pc + 4;
-			if (debug) console.log("--> call " + this.pendingBranch.toString(16));
+			registers[STATE_PENDINGBRANCH] = (registers[STATE_PC] & 0xf0000000) | (target << 2);
+			registers[31] = registers[STATE_PC] + 4;
+			if (debug) console.log("--> call " + registers[STATE_PENDINGBRANCH].toString(16));
 			break;
 		case 4: // beq
-			if (this.registers[rs] == this.registers[rt])
-				this.pendingBranch = this.pc + (simm << 2);
+			if (registers[rs] == registers[rt])
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			break;
 		case 20: // beql
-			if (this.registers[rs] == this.registers[rt])
-				this.pendingBranch = this.pc + (simm << 2);
+			if (registers[rs] == registers[rt])
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			else
-				this.pc += 4;
+				registers[STATE_PC] += 4;
 			break;
 		case 5: // bne
-			if (this.registers[rs] != this.registers[rt])
-				this.pendingBranch = this.pc + (simm << 2);
+			if (registers[rs] != registers[rt])
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			break;
 		case 21: // bnel
-			if (this.registers[rs] != this.registers[rt])
-				this.pendingBranch = this.pc + (simm << 2);
+			if (registers[rs] != registers[rt])
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			else
-				this.pc += 4;
+				registers[STATE_PC] += 4;
 			break;
 		case 6: // blez
-			if ((this.registers[rs] >> 0) <= 0)
-				this.pendingBranch = this.pc + (simm << 2);
+			if ((registers[rs] >> 0) <= 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			break;
 		case 22: // blezl
-			if ((this.registers[rs] >> 0) <= 0)
-				this.pendingBranch = this.pc + (simm << 2);
+			if ((registers[rs] >> 0) <= 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			else
-				this.pc += 4;
+				registers[STATE_PC] += 4;
 			break;
 		case 7: // bgtz
-			if ((this.registers[rs] >> 0) > 0)
-				this.pendingBranch = this.pc + (simm << 2);
+			if ((registers[rs] >> 0) > 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			break;
 		case 23: // bgtzl
-			if ((this.registers[rs] >> 0) > 0)
-				this.pendingBranch = this.pc + (simm << 2);
+			if ((registers[rs] >> 0) > 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
 			else
-				this.pc += 4;
+				registers[STATE_PC] += 4;
 			break;
 		case 8: // addi
 			// FIXME: is this ok? (let's not do the trapping...)
 			if (rt == 0) break;
-			this.registers[rt] = (this.registers[rs] + simm) >>> 0;
+			registers[rt] = (registers[rs] + simm) >>> 0;
 			break;
 		case 9: // addiu
 			if (rt == 0) break;
-			this.registers[rt] = (this.registers[rs] + simm) >>> 0;
+			registers[rt] = (registers[rs] + simm) >>> 0;
 			break;
 		case 10: // slti
 			if (rt == 0) break;
-			if ((this.registers[rs] >> 0) < simm)
-				this.registers[rt] = 1;
+			if ((registers[rs] >> 0) < simm)
+				registers[rt] = 1;
 			else
-				this.registers[rt] = 0;
+				registers[rt] = 0;
 			break;
 		case 11: // sltiu
 			if (rt == 0) break;
-			/*console.log((this.registers[rs]).toString(16));
+			/*console.log((registers[rs]).toString(16));
 			console.log((simm >>> 0).toString(16));
-			console.log(this.registers[rs] < (simm >>> 0));*/
-			if (this.registers[rs] < (simm >>> 0))
-				this.registers[rt] = 1;
+			console.log(registers[rs] < (simm >>> 0));*/
+			if (registers[rs] < (simm >>> 0))
+				registers[rt] = 1;
 			else
-				this.registers[rt] = 0;
+				registers[rt] = 0;
 			break;
 		case 12: // andi
 			if (rt == 0) break;
-			this.registers[rt] = this.registers[rs] & imm;
+			registers[rt] = registers[rs] & imm;
 			break;
 		case 13: // ori
 			if (rt == 0) break;
-			this.registers[rt] = this.registers[rs] | imm;
+			registers[rt] = registers[rs] | imm;
 			break;
 		case 14: // xori
 			if (rt == 0) break;
-			this.registers[rt] = this.registers[rs] ^ imm;
+			registers[rt] = registers[rs] ^ imm;
 			break;
 		case 15: // lui
 			// assert(rs == 0);
 			if (rt == 0) break;
-			this.registers[rt] = imm << 16;
+			registers[rt] = imm << 16;
 			break;
 		case 32: // lb
 			if (rt == 0) break;
-			var addr = this.registers[rs] + simm;
+			var addr = registers[rs] + simm;
 			var v = this.read8(addr);
 			if (v & 0x80) v |= 0xffffff00;
-			this.registers[rt] = v;
+			registers[rt] = v;
 			break;
 		case 33: // lh
 			if (rt == 0) break;
-			var addr = this.registers[rs] + simm;
+			var addr = registers[rs] + simm;
 			var v = this.read16(addr >>> 0);
 			if (v & 0x8000) v |= 0xffff0000;
-			this.registers[rt] = v;
+			registers[rt] = v;
 			break;
 		case 37: // lhu
 			if (rt == 0) break;
-			var addr = this.registers[rs] + simm;
+			var addr = registers[rs] + simm;
 			var v = this.read16(addr >>> 0);
-			this.registers[rt] = v;
+			registers[rt] = v;
 			break;
 		case 34: // lwl
 			if (rt == 0) break;
-			var addr = (this.registers[rs] + simm) >>> 0;
+			var addr = (registers[rs] + simm) >>> 0;
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			var value = this.read32(addr);
@@ -1175,7 +1208,7 @@ if (typeof window == 'undefined') {
 
 			// Take the aligned bytes starting here (mask 0 = 1, mask 3 = all of them).
 			if (mask == 3) {
-				this.registers[rt] = value;
+				registers[rt] = value;
 				break;
 			}
 
@@ -1184,19 +1217,19 @@ if (typeof window == 'undefined') {
 
 			// Use only the least-significant bits in the register.
 			mask = (0xffffffff >>> ((1 + mask) * 8)) >>> 0;
-			this.registers[rt] = (this.registers[rt] & mask) | value;
+			registers[rt] = (registers[rt] & mask) | value;
 			//console.log("lwl " + value.toString(16) + " " + mask + " " + addr.toString(16));
 			break;
 		case 38: // lwr
 			if (rt == 0) break;
-			var addr = (this.registers[rs] + simm) >>> 0;
+			var addr = (registers[rs] + simm) >>> 0;
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			var value = this.read32(addr);
 
 			// Take the aligned bytes ending here (mask 0 = all, 1 = 3 of them, ...).
 			if (mask == 0) {
-				this.registers[rt] = value;
+				registers[rt] = value;
 				break;
 			}
 
@@ -1205,45 +1238,45 @@ if (typeof window == 'undefined') {
 
 			// Use only the most-significant bits in the register.
 			mask = (0xffffffff << ((4 - mask) * 8)) >>> 0;
-			this.registers[rt] = (this.registers[rt] & mask) | value;
+			registers[rt] = (registers[rt] & mask) | value;
 			//console.log("lwr " + value.toString(16) + " " + mask + " " + addr.toString(16));
 			break;
 		case 35: // lw
 			if (rt == 0) break;
-			var addr = this.registers[rs] + simm;
-			this.registers[rt] = this.read32(addr >>> 0);
+			var addr = registers[rs] + simm;
+			registers[rt] = this.read32(addr >>> 0);
 			break;
 		case 36: // lbu
 			if (rt == 0) break;
-			var addr = this.registers[rs] + simm;
+			var addr = registers[rs] + simm;
 			var v = this.read8(addr);
-			this.registers[rt] = v >>> 0;
+			registers[rt] = v >>> 0;
 			break;
 		case 40: // sb
-			var addr = this.registers[rs] + simm;
-			this.write8(addr >>> 0, this.registers[rt]);
+			var addr = registers[rs] + simm;
+			this.write8(addr >>> 0, registers[rt]);
 			break;
 		case 41: // sh
-			var addr = this.registers[rs] + simm;
-			this.write16(addr >>> 0, this.registers[rt]);
+			var addr = registers[rs] + simm;
+			this.write16(addr >>> 0, registers[rt]);
 			break;
 		case 42: // swl
 			// FIXME: verify
-/*			var addr = this.registers[rs] + simm;
+/*			var addr = registers[rs] + simm;
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			// We have the most-significant bits and we want to make them the least-significant ones.
-			var value = this.registers[rt] >>> ((3 - mask) * 8);
+			var value = registers[rt] >>> ((3 - mask) * 8);
 			if (mask == 3) // agh js
 				mask = 0;
 			else
 				mask = 0xffffffff << ((1 + mask) * 8);
 			value = (this.read32(addr >>> 0) & mask) | value;
 			this.write32(addr >>> 0, value);*/
-			var addr = this.registers[rs] + simm;
+			var addr = registers[rs] + simm;
 			//console.log("swl " + this.read32(addr).toString(16));
 			var mask = (addr & 3) ^ 3;
-			var value = this.registers[rt];
+			var value = registers[rt];
 			this.write8(addr, value >>> 24);
 			if (mask <= 2)
 				this.write8(addr - 1, value >>> 16);
@@ -1254,19 +1287,19 @@ if (typeof window == 'undefined') {
 			break;
 		case 46: // swr
 			// FIXME: verify
-			/*var addr = this.registers[rs] + simm;
+			/*var addr = registers[rs] + simm;
 			var mask = addr & 0x3;
 			addr = addr & 0xfffffffc;
 			// We have the least-significant bits and we want to make them the most-significant ones.
-			var value = (this.registers[rt] << (mask * 8)) >>> 0;
+			var value = (registers[rt] << (mask * 8)) >>> 0;
 			if (mask != 0) // agh js
 				mask = 0xffffffff >>> ((4 - mask) * 8);
 			value = (this.read32(addr >>> 0) & mask) | value;
 			this.write32(addr >>> 0, value);*/
-			var addr = this.registers[rs] + simm;
+			var addr = registers[rs] + simm;
 			//console.log("swr " + this.read32(addr).toString(16));
 			var mask = (addr & 3) ^ 3;
-			var value = this.registers[rt];
+			var value = registers[rt];
 			this.write8(addr, value >>> 0);
 			if (mask >= 1)
 				this.write8(addr + 1, value >>> 8);
@@ -1276,21 +1309,21 @@ if (typeof window == 'undefined') {
 				this.write8(addr + 3, value >>> 24);
 			break;
 		case 43: // sw
-			var addr = this.registers[rs] + simm;
-			this.write32(addr >>> 0, this.registers[rt]);
+			var addr = registers[rs] + simm;
+			this.write32(addr >>> 0, registers[rt]);
 			break;
 		case 48: // ll
 			// Everything is atomic in our world.
 			if (rt == 0) break;
-			var addr = this.registers[rs] + simm;
-			this.registers[rt] = this.read32(addr >>> 0);
+			var addr = registers[rs] + simm;
+			registers[rt] = this.read32(addr >>> 0);
 			break;
 		case 56: // sc
-			var addr = this.registers[rs] + simm;
-			this.write32(addr >>> 0, this.registers[rt]);
+			var addr = registers[rs] + simm;
+			this.write32(addr >>> 0, registers[rt]);
 			if (rt == 0) break;
 			// Everything is atomic in our world.
-			this.registers[rt] = 1;
+			registers[rt] = 1;
 			break;
 		// *** fpu ***
 		case 17: // cop1
@@ -1298,24 +1331,24 @@ if (typeof window == 'undefined') {
 			this.runFpuInst(subOpcodeS, rs, rt, rd, sa, simm);
 			break;
 		case 49: // lwc1
-			var addr = this.registers[rs] + simm;
-			this.registers[32 + rt] = this.read32(addr >>> 0);
+			var addr = registers[rs] + simm;
+			registers[32 + rt] = this.read32(addr >>> 0);
 			break;
 		case 53: // ldc1
 			// TODO: fail on non-even rt?
-			var addr = this.registers[rs] + simm;
-			this.registers[32 + rt] = this.read32(addr >>> 0);
-			this.registers[33 + rt] = this.read32((addr + 4) >>> 0);
+			var addr = registers[rs] + simm;
+			registers[32 + rt] = this.read32(addr >>> 0);
+			registers[33 + rt] = this.read32((addr + 4) >>> 0);
 			break;
 		case 57: // swc1
-			var addr = this.registers[rs] + simm;
-			this.write32(addr >>> 0, this.registers[32 + rt]);
+			var addr = registers[rs] + simm;
+			this.write32(addr >>> 0, registers[32 + rt]);
 			break;
 		case 61: // sdc1
 			// TODO: fail on non-even rt?
-			var addr = this.registers[rs] + simm;
-			this.write32(addr >>> 0, this.registers[32 + rt]);
-			this.write32((addr + 4) >>> 0, this.registers[33 + rt]);
+			var addr = registers[rs] + simm;
+			this.write32(addr >>> 0, registers[32 + rt]);
+			this.write32((addr + 4) >>> 0, registers[33 + rt]);
 			break;
 		default:
 			// coprocessor is 0100zz, i.e. 16 t/m 31
@@ -1327,8 +1360,8 @@ if (typeof window == 'undefined') {
 		}
 
 		if (!this.running && !this.exited) {
-			this.pc = this.oldpc;
-			this.pendingBranch = this.oldPendingBranch;
+			registers[STATE_PC] = registers[STATE_OLDPC];
+			registers[STATE_PENDINGBRANCH] = registers[STATE_OLDPENDINGBRANCH];
 		}
 
 		if (this.running)
