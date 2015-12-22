@@ -579,17 +579,17 @@ if (typeof window == 'undefined') {
 		if (addr < 0)
 			throw Error("you broke it address " + addr.toString(16));
 		if (addr >= 0x80000000)
-			throw Error("bad address " + addr.toString(16) + " at pc " + this.pc.toString(16));
+			throw Error("bad address " + addr.toString(16) + " at pc " + this.oldpc.toString(16));
 		var localPageId = addr >>> 16;
 
 		if ((this.pageflags[localPageId] & prot) != prot) {
 			// "real" fault
-			throw Error("fault at " + addr.toString(16) + " at pc " + this.pc.toString(16) + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
+			throw Error("fault at " + addr.toString(16) + " at pc " + this.oldpc.toString(16) + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
 		}
 
 		var pageId = this.pagemap[localPageId];
 		if (pageId == 0)
-			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.pc.toString(16));
+			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.oldpc.toString(16));
 
 		var pageFlags = globalPageFlags[pageId];
 		if ((pageFlags & prot) != prot) {
@@ -615,7 +615,7 @@ if (typeof window == 'undefined') {
 				this.pagemap[localPageId] = pageId;
 			} else {
 				// We don't know how to deal with this.
-				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.pc.toString(16));
+				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.oldpc.toString(16));
 			}
 		}
 
