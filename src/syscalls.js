@@ -36,7 +36,7 @@ function sys_brk(proc) {
 function sys_set_tid_address(proc) {
 	var ptr = proc.registers[4];
 	// FIXME: this should set proc.clear_child_tid for this thread
-	return this.pid; // FIXME: thread id
+	return proc.pid; // FIXME: thread id
 }
 
 function sys_set_thread_area(proc) {
@@ -69,7 +69,7 @@ function sys_getppid(proc) {
 
 function sys_getpgrp(proc) {
 	// FIXME
-	return 0;
+	return proc.pid;
 }
 
 function sys_setsid(proc) {
@@ -199,9 +199,11 @@ function sys_mmap_core(proc, ispgoffset) {
 			isOK = true;
 			for (var n = 0; n < pages; ++n) {
 				var pageid = (start >>> 16) + n;
+				if (pageid >= 0x8000)
+					return -ENOMEM;
 				if (proc.pagemap[pageid]) {
 					isOK = false;
-					start = pageid << 16;
+					start = (pageid + 1) << 16;
 					break;
 				}
 			}
@@ -1098,8 +1100,17 @@ function sys_execve(proc) {
 	}
 
 	// Is it a shell script?
-	// XXX: memfs only, hacky
-	var buffer = new Uint8Array(node.data);
+	// XXX: memfs only, hacky (see also loadElf)
+	var buffer;
+	if (typeof node.data == 'string') {
+		var tmpbuf = new ArrayBuffer(node.data.length);
+		var tmpview = new Uint8Array(tmpbuf);
+		for (var n = 0; n < node.data.length; ++n)
+			tmpview[n] = node.data.charCodeAt(n);
+		buffer = tmpbuf;
+	} else
+		buffer = new Uint8Array(node.data);
+
 	if (buffer[0] == 0x23 && buffer[1] == 0x21) { // #!
 		var b = 2;
 		while (b < buffer.length && (buffer[b] == 0x20 || buffer[b] == 0x9)) // space or tab
