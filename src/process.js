@@ -888,14 +888,14 @@ if (typeof window == 'undefined') {
 				this.registers[rd] = this.resultHigh;
 				break;
 			case 17: // mthi
-				throw Error(); // FIXME
+				this.resultHigh = this.registers[rs];
 				break;
 			case 18: // mflo
 				if (rd == 0) break;
 				this.registers[rd] = this.resultLow;
 				break;
 			case 19: // mtlo
-				throw Error(); // FIXME
+				this.resultLow = this.registers[rs];
 				break;
 			case 24: // mult
 				this.signedMult(this.registers[rt], this.registers[rs]);
@@ -916,14 +916,18 @@ if (typeof window == 'undefined') {
 				this.resultHigh = (this.registers[rs] % this.registers[rt]) >>> 0;
 				break;
 			case 32: // add
-				throw Error(); // FIXME
+				// FIXME: is this ok? (let's not do the trapping...)
+				if (rd == 0) break;
+				this.registers[rd] = (this.registers[rt] + this.registers[rs]) >>> 0;
 				break;
 			case 33: // addu
 				if (rd == 0) break;
 				this.registers[rd] = (this.registers[rt] + this.registers[rs]) >>> 0;
 				break;
 			case 34: // sub
-				throw Error(); // FIXME
+				// FIXME: is this ok? (let's not do the trapping...)
+				if (rd == 0) break;
+				this.registers[rd] = (this.registers[rs] - this.registers[rt]) >>> 0;
 				break;
 			case 35: // subu
 				if (rd == 0) break;
@@ -1012,10 +1016,16 @@ if (typeof window == 'undefined') {
 					this.pendingBranch = this.pc + (simm << 2);
 				break;
 			case 2: // bltzl
-				throw Error(); // FIXME
+				if ((this.registers[rs] >> 0) < 0)
+					this.pendingBranch = this.pc + (simm << 2);
+				else
+					this.pc += 4;
 				break;
 			case 3: // bgezl
-				throw Error(); // FIXME
+				if ((this.registers[rs] >> 0) >= 0)
+					this.pendingBranch = this.pc + (simm << 2);
+				else
+					this.pc += 4;
 				break;
 			case 16: // bltzal
 				this.registers[31] = this.pc + 4;
@@ -1091,7 +1101,9 @@ if (typeof window == 'undefined') {
 				this.pc += 4;
 			break;
 		case 8: // addi
-			throw Error(); // FIXME
+			// FIXME: is this ok? (let's not do the trapping...)
+			if (rt == 0) break;
+			this.registers[rt] = (this.registers[rs] + simm) >>> 0;
 			break;
 		case 9: // addiu
 			if (rt == 0) break;
