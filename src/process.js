@@ -469,7 +469,7 @@ if (typeof window == 'undefined') {
 			this.mem8[this.translate(dummy++, PROT_WRITE)] = 0;
 		}
 
-		sp = sp - (17 + argp.length + envpp.length)*4; // FIXME: de-hardcode
+		sp = sp - (19 + argp.length + envpp.length)*4; // FIXME: de-hardcode
 		this.registers[29] = sp;
 
 		// Write arguments/environment.
@@ -517,6 +517,10 @@ if (typeof window == 'undefined') {
 		//sp += 4;
 		//this.write32(sp, 0x100); // XXX: hack
 		//sp += 4;
+		this.write32(sp, 6); // AT_PAGESZ (musl assumes this exists)
+		sp += 4;
+		this.write32(sp, 65536);
+		sp += 4;
 		this.write32(sp, 0); // AT_NULL
 		sp += 4;
 		this.write32(sp, 0);
