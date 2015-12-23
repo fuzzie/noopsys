@@ -69,13 +69,15 @@ function emuStart() {
 }
 
 var bootTime = new Date();
-var printk = function(string) {
-	var str = string;
+var kernelLog = "";
+var printk = function(str) {
 	var mytime = ("     " + ((new Date() - bootTime) / 1000).toFixed(6)).slice(-12);
+	var line = "[" + mytime + "] " + str;
+	kernelLog = kernelLog + line;
 	if (typeof window ==='undefined') {
-		process.stdout.write("[" + mytime + "] " + str);
+		process.stdout.write(line);
 	} else {
-		terminalObj.write("[" + mytime + "] " + str);
+		terminalObj.write(line);
 	}
 }
 

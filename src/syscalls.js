@@ -21,6 +21,31 @@ function sys_sysinfo(proc) {
 	return 0;
 }
 
+function sys_syslog(proc) {
+	var type = proc.registers[4];
+	var bufp = proc.registers[5];
+	var len = proc.registers[6];
+
+	switch (type) {
+	case 0: // SYSLOG_ACTION_CLOSE
+		return 0;
+	case 1: // SYSLOG_ACTION_OPEN
+		return 0;
+	case 3: // SYSLOG_ACTION_READ_ALL
+		var start = Math.max(0, kernelLog.length - len);
+		var count = Math.min(kernelLog.length, len);
+		for (var n = 0; n < count; ++n) {
+			proc.write8(bufp++, kernelLog.charCodeAt(start + n));
+		}
+		return count;
+	case 10: // SYSLOG_ACTION_SIZE_BUFFER
+		return kernelLog.length;
+	}
+
+	// We don't implement the rest.
+	return -EINVAL;
+}
+
 function sys_brk(proc) {
 	// XXX: this is all just a hack
 	if (proc.registers[4] == 0)
@@ -1349,7 +1374,7 @@ var syscalls = {
 // 4100: sys_fstatfs,
 // 4101: sys_ioperm, /* not implemented */
 // 4102: sys_socketcall,
-// 4103: sys_syslog,
+4103: sys_syslog,
 // 4104: sys_setitimer,
 // 4105: sys_getitimer,
 4106: sys_stat, /* sys_newstat */
