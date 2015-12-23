@@ -226,16 +226,13 @@ memFSBackedFile.prototype.read = function(process, size) {
 	if (this.node.data === undefined)
 		return -EIO;
 
-	// XXX: this actually breaks for memfs
-	try {
-		// XXX: stop adding hacks to this and fix it
-		if (typeof this.node.data == 'string')
-			this.data = this.node.data.slice(this.pos, this.pos + size);
-		else
-			this.data = new Uint8Array(this.node.data).slice(this.pos, this.pos + size);
-	} catch (e) {
+	// XXX: stop adding hacks to this and fix it
+	if (typeof this.node.data == 'string')
 		this.data = this.node.data.slice(this.pos, this.pos + size);
-	}
+	else if (this.node.data instanceof ArrayBuffer) // XXX: what if this.pos > length?
+		this.data = new Uint8Array(this.node.data, this.pos, Math.min(size, this.node.data.byteLength - this.pos));
+	else
+		this.data = this.node.data.slice(this.pos, this.pos + size);
 	var len = this.data.length;
 	this.pos = this.pos + len;
 	return len;

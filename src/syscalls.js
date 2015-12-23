@@ -392,7 +392,8 @@ function sys_read(proc) {
 			for (var n = 0; n < ret; ++n) {
 				proc.write8(addr + n, file.data[n]);
 			}
-		file.data = file.data.slice(ret); // XXX
+		if (!(file.data instanceof Uint8Array))
+			file.data = file.data.slice(ret); // XXX
 	}
 	return ret;
 }
