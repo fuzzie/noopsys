@@ -134,12 +134,20 @@ function Process() {
 	}
 
 	this.invalidateHacks = function() {
-		this.optOldPage = 0xffffffff >>> 0;
-		this.optOldWritePage = 0xffffffff >>> 0;
-		this.optOldCodePage = 0xffffffff >>> 0;
+		this.optOldPhysPage = 0xffffffff >>> 0;
+		this.optOlderPhysPage = 0xffffffff >>> 0;
+//		this.optOldestPhysPage = 0xffffffff >>> 0;
+		this.optOldWritePhysPage = 0xffffffff >>> 0;
+		this.optOldCodePhysPage = 0xffffffff >>> 0;
+		this.optOlderCodePhysPage = 0xffffffff >>> 0;
+//		this.optOldestCodePhysPage = 0xffffffff >>> 0;
 		this.optOldAddr = 0xffffffff >>> 0;
+		this.optOlderAddr = 0xffffffff >>> 0;
+//		this.optOldestAddr = 0xffffffff >>> 0;
 		this.optOldWriteAddr = 0xffffffff >>> 0;
 		this.optOldCodeAddr = 0xffffffff >>> 0;
+		this.optOlderCodeAddr = 0xffffffff >>> 0;
+//		this.optOldestCodeAddr = 0xffffffff >>> 0;
 	}
 
 	this.initMemory = function() {
@@ -588,16 +596,26 @@ if (typeof window == 'undefined') {
 	this.translate = function(addr, prot) {
 		// If this.optOldAddr contains the higher bits of addr, we're still using the same page.
 		// In this case, we can use a heap address directly and avoid translation.
-		// XXX: This doesn't account for page table changing from under us, etc.
+		// (This is rather ad-hoc but makes a huge difference in performance.)
+		var shiftAddr = (addr >>> 16);
+		var addrLow = (addr & 0xffff);
 		if (prot == PROT_EXEC) {
-			if ((addr >>> 16) == this.optOldCodeAddr)
-				return this.optOldCodePage + (addr & 0xffff);
+			if (shiftAddr == this.optOldCodeAddr)
+				return this.optOldCodePhysPage + addrLow;
+			else if (shiftAddr == this.optOlderCodeAddr)
+				return this.optOlderCodePhysPage + addrLow;
+//			else if (shiftAddr == this.optOldestCodeAddr)
+//				return this.optOldestCodePhysPage + addrLow;
 		} else if (prot == PROT_WRITE) {
-			if ((addr >>> 16) == this.optOldWriteAddr)
-				return this.optOldWritePage + (addr & 0xffff);
+			if (shiftAddr == this.optOldWriteAddr)
+				return this.optOldWritePhysPage + addrLow;
 		} else {
-			if ((addr >>> 16) == this.optOldAddr)
-				return this.optOldPage + (addr & 0xffff);
+			if (shiftAddr == this.optOldAddr)
+				return this.optOldPhysPage + addrLow;
+			else if (shiftAddr == this.optOlderAddr)
+				return this.optOlderPhysPage + addrLow;
+//			else if (shiftAddr == this.optOldestAddr)
+//				return this.optOldestPhysPage + addrLow;
 		}
 
 		return this.translateMiss(addr, prot);
@@ -648,17 +666,27 @@ if (typeof window == 'undefined') {
 				// We don't know how to deal with this.
 				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
 			}
+
+			this.invalidateHacks();
 		}
 
 		var pageAddr = pageId << 16;
 		if (prot == PROT_EXEC) {
-			this.optOldCodePage = pageAddr >>> 0;
+//			this.optOldestCodePhysPage = this.optOlderCodePhysPage;
+//			this.optOldestCodeAddr = this.optOlderCodeAddr;
+			this.optOlderCodePhysPage = this.optOldCodePhysPage;
+			this.optOlderCodeAddr = this.optOldCodeAddr;
+			this.optOldCodePhysPage = pageAddr >>> 0;
 			this.optOldCodeAddr = addr >>> 16;
 		} else if (prot == PROT_WRITE) {
-			this.optOldWritePage = pageAddr >>> 0;
+			this.optOldWritePhysPage = pageAddr >>> 0;
 			this.optOldWriteAddr = addr >>> 16;
 		} else {
-			this.optOldPage = pageAddr >>> 0;
+//			this.optOldestPhysPage = this.optOlderPhysPage;
+//			this.optOldestAddr = this.optOlderAddr;
+			this.optOlderPhysPage = this.optOldPhysPage;
+			this.optOlderAddr = this.optOldAddr;
+			this.optOldPhysPage = pageAddr >>> 0;
 			this.optOldAddr = addr >>> 16;
 		}
 		return pageAddr + (addr & 0xffff);
