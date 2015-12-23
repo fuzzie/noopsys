@@ -1,7 +1,7 @@
 function ELFFile(buffer) {
 	var u8a = new Uint8Array(buffer);
-	var u16a = new Uint16Array(buffer);
-	var u32a = new Uint32Array(buffer);
+	var u16a = new Uint16Array(buffer, 0, Math.floor(buffer.byteLength / 2));
+	var u32a = new Uint32Array(buffer, 0, Math.floor(buffer.byteLength / 4));
 	if (u8a[0] != 0x7f || u8a[1] != 0x45 || u8a[2] != 0x4c || u8a[3] != 0x46)
 		throw Error("not ELF file");
 	if (u8a[4] != 1)
