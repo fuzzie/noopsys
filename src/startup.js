@@ -16,9 +16,8 @@ function myLoop() {
 		currentProcessId = i;
 		var ticks = 0;
 		// Beware: there is a significant performance penalty for re-scheduling.
-		while (p.running && (ticks++ < 500000)) {
-			p.runOneInst();
-		}
+		if (p.running)
+			instCount = instCount + p.runInstLoop(500000);
 		if (p.running)
 			busy = true;
 		if (p.exited && p.pagemapPage != 0) {

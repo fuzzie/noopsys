@@ -1363,9 +1363,15 @@ if (typeof window == 'undefined') {
 			registers[STATE_PC] = registers[STATE_OLDPC];
 			registers[STATE_PENDINGBRANCH] = registers[STATE_OLDPENDINGBRANCH];
 		}
-
-		if (this.running)
-			instCount++;
 	};
+
+	this.runInstLoop = function(maxInsts) {
+		for (var n = 0; n < maxInsts; ++n) {
+			this.runOneInst();
+			if (!this.running)
+				return n;
+		}
+		return maxInsts;
+	}
 }
 
