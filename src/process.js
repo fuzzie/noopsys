@@ -949,7 +949,7 @@ if (typeof window == 'undefined') {
 				registers[STATE_REG_HIGH] = (registers[rs] % registers[rt]) >>> 0;
 				break;
 			case 32: // add
-				// FIXME: is this ok? (let's not do the trapping...)
+				// We don't trap.
 				if (rd == 0) break;
 				registers[rd] = (registers[rt] + registers[rs]) >>> 0;
 				break;
@@ -958,7 +958,7 @@ if (typeof window == 'undefined') {
 				registers[rd] = (registers[rt] + registers[rs]) >>> 0;
 				break;
 			case 34: // sub
-				// FIXME: is this ok? (let's not do the trapping...)
+				// We don't trap.
 				if (rd == 0) break;
 				registers[rd] = (registers[rs] - registers[rt]) >>> 0;
 				break;
@@ -1134,7 +1134,7 @@ if (typeof window == 'undefined') {
 				registers[STATE_PC] += 4;
 			break;
 		case 8: // addi
-			// FIXME: is this ok? (let's not do the trapping...)
+			// We don't trap.
 			if (rt == 0) break;
 			registers[rt] = (registers[rs] + simm) >>> 0;
 			break;
@@ -1151,9 +1151,6 @@ if (typeof window == 'undefined') {
 			break;
 		case 11: // sltiu
 			if (rt == 0) break;
-			/*console.log((registers[rs]).toString(16));
-			console.log((simm >>> 0).toString(16));
-			console.log(registers[rs] < (simm >>> 0));*/
 			if (registers[rs] < (simm >>> 0))
 				registers[rt] = 1;
 			else
@@ -1218,7 +1215,6 @@ if (typeof window == 'undefined') {
 			// Use only the least-significant bits in the register.
 			mask = (0xffffffff >>> ((1 + mask) * 8)) >>> 0;
 			registers[rt] = (registers[rt] & mask) | value;
-			//console.log("lwl " + value.toString(16) + " " + mask + " " + addr.toString(16));
 			break;
 		case 38: // lwr
 			if (rt == 0) break;
@@ -1239,7 +1235,6 @@ if (typeof window == 'undefined') {
 			// Use only the most-significant bits in the register.
 			mask = (0xffffffff << ((4 - mask) * 8)) >>> 0;
 			registers[rt] = (registers[rt] & mask) | value;
-			//console.log("lwr " + value.toString(16) + " " + mask + " " + addr.toString(16));
 			break;
 		case 35: // lw
 			if (rt == 0) break;
@@ -1261,20 +1256,7 @@ if (typeof window == 'undefined') {
 			this.write16(addr >>> 0, registers[rt]);
 			break;
 		case 42: // swl
-			// FIXME: verify
-/*			var addr = registers[rs] + simm;
-			var mask = addr & 0x3;
-			addr = addr & 0xfffffffc;
-			// We have the most-significant bits and we want to make them the least-significant ones.
-			var value = registers[rt] >>> ((3 - mask) * 8);
-			if (mask == 3) // agh js
-				mask = 0;
-			else
-				mask = 0xffffffff << ((1 + mask) * 8);
-			value = (this.read32(addr >>> 0) & mask) | value;
-			this.write32(addr >>> 0, value);*/
 			var addr = registers[rs] + simm;
-			//console.log("swl " + this.read32(addr).toString(16));
 			var mask = (addr & 3) ^ 3;
 			var value = registers[rt];
 			this.write8(addr, value >>> 24);
@@ -1286,18 +1268,7 @@ if (typeof window == 'undefined') {
 				this.write8(addr - 3, value >>> 0);
 			break;
 		case 46: // swr
-			// FIXME: verify
-			/*var addr = registers[rs] + simm;
-			var mask = addr & 0x3;
-			addr = addr & 0xfffffffc;
-			// We have the least-significant bits and we want to make them the most-significant ones.
-			var value = (registers[rt] << (mask * 8)) >>> 0;
-			if (mask != 0) // agh js
-				mask = 0xffffffff >>> ((4 - mask) * 8);
-			value = (this.read32(addr >>> 0) & mask) | value;
-			this.write32(addr >>> 0, value);*/
 			var addr = registers[rs] + simm;
-			//console.log("swr " + this.read32(addr).toString(16));
 			var mask = (addr & 3) ^ 3;
 			var value = registers[rt];
 			this.write8(addr, value >>> 0);
