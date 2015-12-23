@@ -98,18 +98,18 @@ function freePage(pageno) {
 }
 
 // MIPS has 32 normal and 32 fp registers.
-var STATE_PC = 64;
-var STATE_OLDPC = 65;
-var STATE_PENDINGBRANCH = 66;
-var STATE_OLDPENDINGBRANCH = 67;
-var STATE_REG_LOW = 68;
-var STATE_REG_HIGH = 69;
+const STATE_PC = 64;
+const STATE_OLDPC = 65;
+const STATE_PENDINGBRANCH = 66;
+const STATE_OLDPENDINGBRANCH = 67;
+const STATE_REG_LOW = 68;
+const STATE_REG_HIGH = 69;
 
-var STATE_COPY_COUNT = 70; // state copied in clone()
+const STATE_COPY_COUNT = 70; // state copied in clone()
 
 // pointers into memory
-var STATE_PAGEMAP = 70;
-var STATE_PAGEFLAGS = 71;
+const STATE_PAGEMAP = 70;
+const STATE_PAGEFLAGS = 71;
 
 function Process() {
 	// note: buffers always initialized to zero
@@ -652,13 +652,13 @@ if (typeof window == 'undefined') {
 
 		var pageAddr = pageId << 16;
 		if (prot == PROT_EXEC) {
-			this.optOldCodePage = pageAddr;
+			this.optOldCodePage = pageAddr >>> 0;
 			this.optOldCodeAddr = addr >>> 16;
 		} else if (prot == PROT_WRITE) {
-			this.optOldWritePage = pageAddr;
+			this.optOldWritePage = pageAddr >>> 0;
 			this.optOldWriteAddr = addr >>> 16;
 		} else {
-			this.optOldPage = pageAddr;
+			this.optOldPage = pageAddr >>> 0;
 			this.optOldAddr = addr >>> 16;
 		}
 		return pageAddr + (addr & 0xffff);
