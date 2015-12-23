@@ -83,10 +83,16 @@ PipeReader.prototype.clone = function() {
 PipeReader.prototype.close = function() {
 }
 
+// nodejs
+var StreamBackedFile = null;
+// browser
+var terminalObj = null;
+var TerminalBackedFile = null;
+
 if (typeof window == 'undefined') {
 
 /* for node.js use,  */
-function StreamBackedFile(read, write) {
+StreamBackedFile = function(read, write) {
 	this.readStream = read;
 	this.writeStream = write;
 
@@ -162,8 +168,7 @@ StreamBackedFile.prototype.close = function() {
 } else {
 	// browser
 
-	var terminalObj;
-	function TerminalBackedFile(term) {
+	TerminalBackedFile = function(term) {
 		this.term = term;
 		this.data = [];
 

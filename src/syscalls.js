@@ -761,7 +761,7 @@ function sys_getdents64(proc) {
 	// TODO: probably this should be done by the node, to allow procfs etc
 	// FIXME: underlying design is bad here (can't use dict)
 	var children = node.getChildren();
-	keys = Object.keys(children);
+	var keys = Object.keys(children);
 	for (var n = 0; n < keys.length; ++n) {
 		if (n < fdo.pos)
 			continue;

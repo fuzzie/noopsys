@@ -79,6 +79,8 @@ var printk = function(string) {
 	}
 }
 
+var goEmulatorGo = null;
+
 if (typeof window == 'undefined') {
 	// node.js
 	try { process.stdin.setRawMode(true); } catch (e) { }
@@ -91,7 +93,7 @@ if (typeof window == 'undefined') {
 	printk("running in node.js mode\n");
 	emuStart();
 } else {
-	function goEmulatorGo(term) {
+	goEmulatorGo = function(term) {
 		terminalObj = term;
 
 		localforage.getItem('rootfs', function(err, value) {
