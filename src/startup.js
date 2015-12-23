@@ -63,7 +63,8 @@ function emuStart() {
 	var p = new Process();
 	processes.push(p);
 
-	p.loadElf(binary, args, []);
+	var env = ["TERM=xterm"];
+	p.loadElf(binary, args, env);
 	myLoop();
 }
 
