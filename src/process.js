@@ -834,8 +834,12 @@ if (typeof window == 'undefined') {
 		//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
 	}
 
-	this.runOneInst = function() {
+	this.runInstLoop = function(maxInsts) {
 		var registers = this.registers;
+
+		// This function is too huge to get inlined, so we fold the loop in here...
+		// ... but I don't want to indent the whole thing, so I don't.
+		for (var insts = 0; insts < maxInsts; ++insts) {
 
 		var pcaddr = this.translate(registers[STATE_PC], PROT_EXEC);
 		var myInst = mem32[pcaddr >>> 2];
@@ -1330,19 +1334,17 @@ if (typeof window == 'undefined') {
 			throw new Error("bad instruction, opcode " + opcode);
 		}
 
-		if (!this.running && !this.exited) {
-			registers[STATE_PC] = registers[STATE_OLDPC];
-			registers[STATE_PENDINGBRANCH] = registers[STATE_OLDPENDINGBRANCH];
+		if (!this.running) {
+			if (!this.exited) {
+				registers[STATE_PC] = registers[STATE_OLDPC];
+				registers[STATE_PENDINGBRANCH] = registers[STATE_OLDPENDINGBRANCH];
+			}
+			return insts;
 		}
-	};
 
-	this.runInstLoop = function(maxInsts) {
-		for (var n = 0; n < maxInsts; ++n) {
-			this.runOneInst();
-			if (!this.running)
-				return n;
-		}
+		} // end of instruction loop
+
 		return maxInsts;
-	}
+	};
 }
 
