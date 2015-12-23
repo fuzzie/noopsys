@@ -164,3 +164,11 @@ var F_GETOWNER_UIDS = 17;
 var F_OFD_GETLK = 36;
 var F_OFD_SETLK = 37;
 var F_OFD_SETLKW = 38;
+
+// termios
+var OPOST = 0x1;
+var OLCUC = 0x2;
+var ONLCR = 0x4;
+var OCRNL = 0x8;
+var ONOCR = 0x10;
+var ONLRET = 0x20;

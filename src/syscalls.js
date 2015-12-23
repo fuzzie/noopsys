@@ -145,9 +145,78 @@ function sys_ioctl(proc) {
 	var fd = proc.registers[4];
 	var request = proc.registers[5];
 	var addr = proc.registers[6];
+
+	// mips has 13 size bits, 3 dir bits
+	var nr = request & 0xff;
+	var type = (request >>> 8) & 0xff;
+	var size = (request >>> 16) & 0x1fff;
+	var dir = (request >>> 29) & 0x7;
+
+	switch (type) {
+	case 0x54: // 'T'
+		switch (nr) {
+		case 0xd:
+			// FIXME: don't hardcode random stuff
+			var c_iflag = 0x0;
+			var c_oflag = ONLCR | OPOST;
+			var c_cflag = 0x0;
+			var c_lflag = 0x2 | 0x8; // ICANON, IECHO
+			var c_line = 0;
+
+			proc.write32(addr, c_iflag);
+			proc.write32(addr + 4, c_oflag);
+			proc.write32(addr + 8, c_cflag);
+			proc.write32(addr + 12, c_lflag);
+			addr += 16;
+			proc.write8(addr++, c_line);
+			proc.write8(addr++, 3); // VINTR
+			proc.write8(addr++, 28); // VQUIT
+			proc.write8(addr++, 127); // VERASE
+			proc.write8(addr++, 21); // VKILL
+			proc.write8(addr++, 0); // VMIN
+			proc.write8(addr++, 0); // VTIME
+			proc.write8(addr++, 0); // VEOL2
+			proc.write8(addr++, 0); // VSWTC
+			proc.write8(addr++, 17); // VSTART
+			proc.write8(addr++, 19); // VSTOP
+			proc.write8(addr++, 26); // VSUSP
+			proc.write8(addr++, 25); // VDSUSP
+			proc.write8(addr++, 18); // VREPRINT
+			proc.write8(addr++, 15); // VDISCARD
+			proc.write8(addr++, 23); // VWERASE
+			proc.write8(addr++, 22); // VLNEXT
+			proc.write8(addr++, 4); // VEOF
+			proc.write8(addr++, 0); // VEOL
+			// don't care at all about the last 4
+			return 0;
+		case 0xe:
+			// TCSETS
+			// FIXME
+			return 0;
+		}
+		break;
+	case 0x74: // 't'
+		switch (nr) {
+		case 104:
+			// TIOCGWINSZ
+			// FIXME
+			return -ENOTTY;
+		case 118:
+			// TIOCSPGRP
+			// FIXME
+			return 0;
+		case 119:
+			// TIOCGPGRP
+			// FIXME: hack
+			proc.write32(addr, proc.pid);
+			return 0;
+		}
+		break;
+	}
+
+	console.log("unhandled ioctl " + request.toString(16));
 	// FIXME: -ENOTTY breaks everything :p
-	//console.log("ioctl " + request.toString(16));
-	return 0;
+	return -ENOTTY;
 }
 
 function sys_mmap_core(proc, ispgoffset) {
