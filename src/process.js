@@ -918,7 +918,11 @@ if (typeof window == 'undefined') {
 		// ... but I don't want to indent the whole thing, so I don't.
 		for (var insts = 0; insts < maxInsts; ++insts) {
 
-		var pcaddr = this.translate(pc, PROT_EXEC);
+		var pcaddr = 0;
+		if ((pc >>> 16) != this.optOldCodeAddr)
+			pcaddr = this.translate(pc, PROT_EXEC);
+		else
+			pcaddr = this.optOldCodePhysPage + (pc & 0xffff);
 		var myInst = mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;
