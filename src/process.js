@@ -99,17 +99,15 @@ function freePage(pageno) {
 
 // MIPS has 32 normal and 32 fp registers.
 const STATE_PC = 64;
-const STATE_OLDPC = 65;
-const STATE_PENDINGBRANCH = 66;
-const STATE_OLDPENDINGBRANCH = 67;
-const STATE_REG_LOW = 68;
-const STATE_REG_HIGH = 69;
+const STATE_PENDINGBRANCH = 65;
+const STATE_REG_LOW = 66;
+const STATE_REG_HIGH = 67;
 
-const STATE_COPY_COUNT = 70; // state copied in clone()
+const STATE_COPY_COUNT = 68; // state copied in clone()
 
 // pointers into memory
-const STATE_PAGEMAP = 70;
-const STATE_PAGEFLAGS = 71;
+const STATE_PAGEMAP = 68;
+const STATE_PAGEFLAGS = 69;
 
 function Process() {
 	// note: buffers always initialized to zero
@@ -627,17 +625,17 @@ if (typeof window == 'undefined') {
 		if (addr < 0)
 			throw Error("you broke it address " + addr.toString(16));
 		if (addr >= 0x80000000)
-			throw Error("bad address " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
+			throw Error("bad address " + addr.toString(16) /*+ " at pc " + this.registers[STATE_OLDPC].toString(16)*/);
 		var localPageId = addr >>> 16;
 
 		if ((this.pageflags[localPageId] & prot) != prot) {
 			// "real" fault
-			throw Error("fault at " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16) + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
+			throw Error("fault at " + addr.toString(16) /*+ " at pc " + this.registers[STATE_OLDPC].toString(16)*/ + " (tried " + prot.toString(16) + ", local flags " + this.pageflags[localPageId].toString(16) + ")");
 		}
 
 		var pageId = this.pagemap[localPageId];
 		if (pageId == 0)
-			throw Error("unmapped address " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
+			throw Error("unmapped address " + addr.toString(16) /*+ " at pc " + this.registers[STATE_OLDPC].toString(16) */);
 
 		var pageFlags = globalPageFlags[pageId];
 		if ((pageFlags & prot) != prot) {
@@ -663,7 +661,7 @@ if (typeof window == 'undefined') {
 				this.pagemap[localPageId] = pageId;
 			} else {
 				// We don't know how to deal with this.
-				throw Error("unhandled fault at " + addr.toString(16) + " at pc " + this.registers[STATE_OLDPC].toString(16));
+				throw Error("unhandled fault at " + addr.toString(16) /*+ " at pc " + this.registers[STATE_OLDPC].toString(16)*/);
 			}
 
 			this.invalidateHacks();
@@ -911,11 +909,16 @@ if (typeof window == 'undefined') {
 	this.runInstLoop = function(maxInsts) {
 		var registers = this.registers;
 
+		var oldpc = 0;
+		var oldpending = 0;
+		var pc = registers[STATE_PC];
+		var pending = registers[STATE_PENDINGBRANCH];
+
 		// This function is too huge to get inlined, so we fold the loop in here...
 		// ... but I don't want to indent the whole thing, so I don't.
 		for (var insts = 0; insts < maxInsts; ++insts) {
 
-		var pcaddr = this.translate(registers[STATE_PC], PROT_EXEC);
+		var pcaddr = this.translate(pc, PROT_EXEC);
 		var myInst = mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;
@@ -928,23 +931,23 @@ if (typeof window == 'undefined') {
 
 		/*if (debug) {
 			var subOpcodeS = myInst & 0x3f; // special
-			console.log("@" + registers[STATE_PC].toString(16) + ": inst " + opcode + " (" + myInst.toString(16) + ")" + ", " + subOpcodeS);
+			console.log("@" + pc.toString(16) + ": inst " + opcode + " (" + myInst.toString(16) + ")" + ", " + subOpcodeS);
 			var debugInfo = "";
 			for (var n = 0; n < 32; ++n)
 				debugInfo = debugInfo + registers[n].toString(16) + " ";
 			console.log(debugInfo);
 		}*/
 
-		registers[STATE_OLDPC] = registers[STATE_PC];
-		registers[STATE_PC] += 4;
+		oldpc = pc;
+		pc += 4;
 
 		// delayed branching
-		if (registers[STATE_PENDINGBRANCH]) {
-			registers[STATE_PC] = registers[STATE_PENDINGBRANCH] >>> 0;
-			registers[STATE_OLDPENDINGBRANCH] = registers[STATE_PENDINGBRANCH];
-			registers[STATE_PENDINGBRANCH] = 0;
+		if (pending) {
+			pc = pending >>> 0;
+			oldpending = pending;
+			pending = 0;
 		} else
-			registers[STATE_OLDPENDINGBRANCH] = 0;
+			oldpending = 0;
 
 		switch (opcode) {
 		case 0: // special
@@ -977,17 +980,21 @@ if (typeof window == 'undefined') {
 				registers[rd] = (registers[rt] >> (registers[rs] & 0x1f)) >>> 0;
 				break;
 			case 8: // jr
-				registers[STATE_PENDINGBRANCH] = registers[rs];
-				//if (debug) console.log("--- jmp " + registers[STATE_PENDINGBRANCH].toString(16));
+				pending = registers[rs];
+				//if (debug) console.log("--- jmp " + pending.toString(16));
 				break;
 			case 9: // jalr
-				registers[STATE_PENDINGBRANCH] = registers[rs];
-				//if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
+				pending = registers[rs];
+				//if (showCalls) console.log(pc.toString(16) + " --> call " + pending.toString(16));
 				if (rd == 0) break;
-				registers[rd] = registers[STATE_PC] + 4;
+				registers[rd] = pc + 4;
 				break;
 			case 12: // syscall
+				registers[STATE_PC] = pc;
+				registers[STATE_PENDINGBRANCH] = pending;
 				this.syscall();
+				pc = registers[STATE_PC];
+				pending = registers[STATE_PENDINGBRANCH];
 				break;
 			case 13: // break
 				throw Error("breakpoint"); // FIXME
@@ -1120,57 +1127,61 @@ if (typeof window == 'undefined') {
 			}
 			break;
 		case 1: // regimm
+			registers[STATE_PC] = pc;
+			registers[STATE_PENDINGBRANCH] = pending;
 			this.doRegImmInst(rt, rs, simm);
+			pc = registers[STATE_PC];
+			pending = registers[STATE_PENDINGBRANCH];
 			break;
 		case 2: // j
 			var target = myInst & 0x3ffffff;
-			registers[STATE_PENDINGBRANCH] = (registers[STATE_PC] & 0xf0000000) | (target << 2);
+			pending = (pc & 0xf0000000) | (target << 2);
 			break;
 		case 3: // jal
 			var target = myInst & 0x3ffffff;
-			registers[STATE_PENDINGBRANCH] = (registers[STATE_PC] & 0xf0000000) | (target << 2);
-			registers[31] = registers[STATE_PC] + 4;
-			//if (debug) console.log("--> call " + registers[STATE_PENDINGBRANCH].toString(16));
+			pending = (pc & 0xf0000000) | (target << 2);
+			registers[31] = pc + 4;
+			//if (debug) console.log("--> call " + pending.toString(16));
 			break;
 		case 4: // beq
 			if (registers[rs] == registers[rt])
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			break;
 		case 20: // beql
 			if (registers[rs] == registers[rt])
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			else
-				registers[STATE_PC] += 4;
+				pc += 4;
 			break;
 		case 5: // bne
 			if (registers[rs] != registers[rt])
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			break;
 		case 21: // bnel
 			if (registers[rs] != registers[rt])
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			else
-				registers[STATE_PC] += 4;
+				pc += 4;
 			break;
 		case 6: // blez
 			if ((registers[rs] >> 0) <= 0)
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			break;
 		case 22: // blezl
 			if ((registers[rs] >> 0) <= 0)
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			else
-				registers[STATE_PC] += 4;
+				pc += 4;
 			break;
 		case 7: // bgtz
 			if ((registers[rs] >> 0) > 0)
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			break;
 		case 23: // bgtzl
 			if ((registers[rs] >> 0) > 0)
-				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				pending = pc + (simm << 2);
 			else
-				registers[STATE_PC] += 4;
+				pc += 4;
 			break;
 		case 8: // addi
 			// We don't trap.
@@ -1340,7 +1351,11 @@ if (typeof window == 'undefined') {
 			var sa = (myInst >>> 6) & 0x1f;
 			var rd = (myInst >>> 11) & 0x1f;
 			var subOpcodeS = myInst & 0x3f; // special
+			registers[STATE_PC] = pc;
+			registers[STATE_PENDINGBRANCH] = pending;
 			this.runFpuInst(subOpcodeS, rs, rt, rd, sa, simm);
+			pc = registers[STATE_PC];
+			pending = registers[STATE_PENDINGBRANCH];
 			break;
 		case 49: // lwc1
 			var addr = registers[rs] + simm;
@@ -1373,13 +1388,16 @@ if (typeof window == 'undefined') {
 
 		if (!this.running) {
 			if (!this.exited) {
-				registers[STATE_PC] = registers[STATE_OLDPC];
-				registers[STATE_PENDINGBRANCH] = registers[STATE_OLDPENDINGBRANCH];
+				registers[STATE_PC] = oldpc;
+				registers[STATE_PENDINGBRANCH] = oldpending;
 			}
 			return insts;
 		}
 
 		} // end of instruction loop
+
+		registers[STATE_PC] = pc;
+		registers[STATE_PENDINGBRANCH] = pending;
 
 		return maxInsts;
 	};
