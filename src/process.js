@@ -597,9 +597,10 @@ if (typeof window == 'undefined') {
 		var shiftAddr = (addr >>> 16);
 		var addrLow = (addr & 0xffff);
 		if (prot == PROT_EXEC) {
-			if (shiftAddr == this.optOldCodeAddr)
+			// First case is handled directly in exec loop now.
+			/*if (shiftAddr == this.optOldCodeAddr)
 				return this.optOldCodePhysPage + addrLow;
-			else if (shiftAddr == this.optOlderCodeAddr)
+			else*/ if (shiftAddr == this.optOlderCodeAddr)
 				return this.optOlderCodePhysPage + addrLow;
 //			else if (shiftAddr == this.optOldestCodeAddr)
 //				return this.optOldestCodePhysPage + addrLow;
