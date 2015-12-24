@@ -287,7 +287,7 @@ if (typeof window == 'undefined') {
 		v += this.mem8[this.translate(addr + 1, PROT_READ)] << 8;
 		v += this.mem8[this.translate(addr + 2, PROT_READ)] << 16;
 		v += this.mem8[this.translate(addr + 3, PROT_READ)] << 24;
-		//if (debug) console.log("read " + addr.toString(16) + " (" + v.toString(16) + ")");
+		// console.log("unaligned read " + addr.toString(16) + " (" + v.toString(16) + ")");
 		return v >>> 0;
 	}
 
@@ -304,7 +304,6 @@ if (typeof window == 'undefined') {
 	}
 
 	this.write8 = function(addr, value) {
-		// FIXME 
 		this.mem8[this.translate(addr, PROT_WRITE)] = value & 0xff;
 	}
 
@@ -315,12 +314,12 @@ if (typeof window == 'undefined') {
 	}
 
 	this.write32 = function(addr, value) {
-		// if (debug) console.log("write " + addr.toString(16) + " (" + value.toString(16) + ")");
 		var mapped = this.translate(addr, PROT_WRITE);
 		if ((addr & 0x03) == 0x0) {
 			mem32[mapped >> 2] = value;
 			return;
 		}
+		// console.log("unaligned write " + addr.toString(16) + " (" + value.toString(16) + ")");
 		this.mem8[mapped] = value & 0xff;
 		this.mem8[this.translate(addr + 1, PROT_WRITE)] = (value >>> 8) & 0xff;
 		this.mem8[this.translate(addr + 2, PROT_WRITE)] = (value >>> 16) & 0xff;
