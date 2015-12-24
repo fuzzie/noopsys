@@ -273,9 +273,8 @@ function sys_mmap_core(proc, ispgoffset) {
 	var isShared = (flags & MAP_SHARED) == MAP_SHARED;
 
 	// FIXME: the rest
-	// console.log("mmap (" + proc.pid + "): map fd " + fd + " at " + addr.toString(16) + " (" + len + " bytes)");
-
 	var pages = ((len + 0xffff) / 0x10000) >>> 0;
+	// console.log("mmap (" + proc.pid + "): map fd " + (fd >> 0) + " at 0x" + addr.toString(16) + " (" + len + " bytes / " + pages + " pages, prot " + prot + ", flags 0x" + flags.toString(16) + ", offset 0x" + offset.toString(16) + ")");
 
 	// take a memory region
 	var start = proc.mmapHackStart;
@@ -285,6 +284,10 @@ function sys_mmap_core(proc, ispgoffset) {
 		//	throw Error("mmap with non-zero addr"); // TODO
 		start = addr;
 	}
+
+	// We don't allow maps at NULL.
+	if ((flags & MAP_FIXED) && (addr == 0))
+		return -EINVAL;
 
 	// FIXME: sanity checks etc
 	if (!(flags & MAP_FIXED)) {
