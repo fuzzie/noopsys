@@ -861,6 +861,53 @@ if (typeof window == 'undefined') {
 		//console.log("assert 0x" + this.registers[rt].toString(16) + " * 0x" + this.registers[rs].toString(16) + ' == 0x' + ("00000000"+ this.resultHigh.toString(16)).slice(-8) + ("00000000"+this.resultLow.toString(16)).slice(-8));
 	}
 
+	this.doRegImmInst = function(rt, rs, simm) {
+		var registers = this.registers;
+		switch (rt) {
+		case 0: // bltz
+			if ((registers[rs] >> 0) < 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+			break;
+		case 1: // bgez
+			if ((registers[rs] >> 0) >= 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+			break;
+		case 2: // bltzl
+			if ((registers[rs] >> 0) < 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+			else
+				registers[STATE_PC] += 4;
+			break;
+		case 3: // bgezl
+			if ((registers[rs] >> 0) >= 0)
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+			else
+				registers[STATE_PC] += 4;
+			break;
+		case 16: // bltzal
+			registers[31] = registers[STATE_PC] + 4;
+			if ((registers[rs] >> 0) < 0) {
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
+			}
+		case 17: // bgezal
+			registers[31] = registers[STATE_PC] + 4;
+			if ((registers[rs] >> 0) >= 0) {
+				registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
+				if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
+			}
+			break;
+		case 18: // bltzall
+			throw Error(); // FIXME
+			break;
+		case 19: // bgezall
+			throw Error(); // FIXME
+			break;
+		default:
+			throw new Error("bad regimm instruction " + regimm);
+		}
+	}
+
 	this.runInstLoop = function(maxInsts) {
 		var registers = this.registers;
 
@@ -872,22 +919,21 @@ if (typeof window == 'undefined') {
 		var myInst = mem32[pcaddr >>> 2];
 
 		var opcode = myInst >>> 26;
-		var subOpcodeS = myInst & 0x3f; // special
 		var rs = (myInst >>> 21) & 0x1f;
 		var rt = (myInst >>> 16) & 0x1f;
-		var rd = (myInst >>> 11) & 0x1f;
 		var imm = myInst & 0xffff;
-		var simm = imm;
+		var simm = imm >> 0;
 		if (imm & 0x8000)
 			simm = -(0x10000 - imm);
 
-		if (debug) {
+		/*if (debug) {
+			var subOpcodeS = myInst & 0x3f; // special
 			console.log("@" + registers[STATE_PC].toString(16) + ": inst " + opcode + " (" + myInst.toString(16) + ")" + ", " + subOpcodeS);
 			var debugInfo = "";
 			for (var n = 0; n < 32; ++n)
 				debugInfo = debugInfo + registers[n].toString(16) + " ";
 			console.log(debugInfo);
-		}
+		}*/
 
 		registers[STATE_OLDPC] = registers[STATE_PC];
 		registers[STATE_PC] += 4;
@@ -902,6 +948,8 @@ if (typeof window == 'undefined') {
 
 		switch (opcode) {
 		case 0: // special
+			var subOpcodeS = myInst & 0x3f; // special
+			var rd = (myInst >>> 11) & 0x1f;
 			var sa = (myInst >>> 6) & 0x1f;
 			switch (subOpcodeS) {
 			case 0: // sll
@@ -930,11 +978,11 @@ if (typeof window == 'undefined') {
 				break;
 			case 8: // jr
 				registers[STATE_PENDINGBRANCH] = registers[rs];
-				if (debug) console.log("--- jmp " + registers[STATE_PENDINGBRANCH].toString(16));
+				//if (debug) console.log("--- jmp " + registers[STATE_PENDINGBRANCH].toString(16));
 				break;
 			case 9: // jalr
 				registers[STATE_PENDINGBRANCH] = registers[rs];
-				if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
+				//if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
 				if (rd == 0) break;
 				registers[rd] = registers[STATE_PC] + 4;
 				break;
@@ -1052,6 +1100,8 @@ if (typeof window == 'undefined') {
 			}
 			break;
 		case 31: // more special
+			var subOpcodeS = myInst & 0x3f; // special
+			var rd = (myInst >>> 11) & 0x1f;
 			switch (subOpcodeS) {
 			case 59: // rdhwr
 				// This is emulated by the kernel.
@@ -1070,49 +1120,7 @@ if (typeof window == 'undefined') {
 			}
 			break;
 		case 1: // regimm
-			switch (rt) {
-			case 0: // bltz
-				if ((registers[rs] >> 0) < 0)
-					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
-				break;
-			case 1: // bgez
-				if ((registers[rs] >> 0) >= 0)
-					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
-				break;
-			case 2: // bltzl
-				if ((registers[rs] >> 0) < 0)
-					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
-				else
-					registers[STATE_PC] += 4;
-				break;
-			case 3: // bgezl
-				if ((registers[rs] >> 0) >= 0)
-					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
-				else
-					registers[STATE_PC] += 4;
-				break;
-			case 16: // bltzal
-				registers[31] = registers[STATE_PC] + 4;
-				if ((registers[rs] >> 0) < 0) {
-					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
-					if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
-				}
-			case 17: // bgezal
-				registers[31] = registers[STATE_PC] + 4;
-				if ((registers[rs] >> 0) >= 0) {
-					registers[STATE_PENDINGBRANCH] = registers[STATE_PC] + (simm << 2);
-					if (showCalls) console.log(registers[STATE_PC].toString(16) + " --> call " + registers[STATE_PENDINGBRANCH].toString(16));
-				}
-				break;
-			case 18: // bltzall
-				throw Error(); // FIXME
-				break;
-			case 19: // bgezall
-				throw Error(); // FIXME
-				break;
-			default:
-				throw new Error("bad regimm instruction " + regimm);
-			}
+			this.doRegImmInst(rt, rs, simm);
 			break;
 		case 2: // j
 			var target = myInst & 0x3ffffff;
@@ -1122,7 +1130,7 @@ if (typeof window == 'undefined') {
 			var target = myInst & 0x3ffffff;
 			registers[STATE_PENDINGBRANCH] = (registers[STATE_PC] & 0xf0000000) | (target << 2);
 			registers[31] = registers[STATE_PC] + 4;
-			if (debug) console.log("--> call " + registers[STATE_PENDINGBRANCH].toString(16));
+			//if (debug) console.log("--> call " + registers[STATE_PENDINGBRANCH].toString(16));
 			break;
 		case 4: // beq
 			if (registers[rs] == registers[rt])
@@ -1330,6 +1338,8 @@ if (typeof window == 'undefined') {
 		// *** fpu ***
 		case 17: // cop1
 			var sa = (myInst >>> 6) & 0x1f;
+			var rd = (myInst >>> 11) & 0x1f;
+			var subOpcodeS = myInst & 0x3f; // special
 			this.runFpuInst(subOpcodeS, rs, rt, rd, sa, simm);
 			break;
 		case 49: // lwc1
