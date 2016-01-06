@@ -755,9 +755,12 @@ function do_stat_core(proc, node) {
 	proc.write32(buf + 24, 1); // st_nlink, TODO
 	proc.write32(buf + 28, 0); // st_uid, TODO
 	proc.write32(buf + 32, 0); // st_gid, TODO
-	proc.write32(buf + 36, 0); // st_rdev, TODO
+	if (node.mode & S_IFCHR) // this mask also catches S_IFBLK
+		proc.write32(buf + 36, node.data); // st_rdev
+	else
+		proc.write32(buf + 36, 0); // st_rdev
 	// <2 padding bytes>
-	proc.write32(buf + 48, node.size); // st_size, TODO
+	proc.write32(buf + 48, node.size); // st_size
 	proc.write32(buf + 52, 0); // st_size (high bits)
 	proc.write32(buf + 56, 0); // st_atime, TODO
 	// TODO: plus nanosecs?
@@ -808,9 +811,12 @@ function do_stat64_core(proc, node) {
 	proc.write32(buf + 28, 1); // st_nlink, TODO
 	proc.write32(buf + 32, 0); // st_uid, TODO
 	proc.write32(buf + 36, 0); // st_gid, TODO
-	proc.write32(buf + 40, 0); // st_rdev, TODO
+	if (node.mode & S_IFCHR) // this mask also catches S_IFBLK
+		proc.write32(buf + 40, node.data); // st_rdev
+	else
+		proc.write32(buf + 40, 0); // st_rdev
 	// <3 padding bytes>
-	proc.write32(buf + 56, node.size); // st_size, TODO
+	proc.write32(buf + 56, node.size); // st_size
 	proc.write32(buf + 60, 0); // st_size (high bits)
 	proc.write32(buf + 64, 0); // st_atime, TODO
 	// <pad>
