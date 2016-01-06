@@ -4,6 +4,8 @@ var SQUASHFS_METADATA_SIZE = 8192;
 var SQUASHFS_DIR_TYPE = 1;
 var SQUASHFS_FILE_TYPE = 2;
 var SQUASHFS_SYMLINK_TYPE = 3;
+var SQUASHFS_BLKDEV_TYPE = 4;
+var SQUASHFS_CHRDEV_TYPE = 5;
 var SQUASHFS_LDIR_TYPE = 8;
 var SQUASHFS_LREG_TYPE = 9;
 
@@ -98,6 +100,21 @@ function SquashFSSymlinkInode(sfs) {
 	var size = sfs.read32(); // XXX: correct?
 	this.size = size;
 	this.data = sfs.readString(size);
+}
+
+function SquashFSDeviceInode(sfs, isBlock) {
+	SquashFSInode.call(this, sfs);
+
+	if (isBlock) {
+		this.mode |= S_IFBLK;
+		this.inode_type = SQUASHFS_BLKDEV_TYPE;
+	} else {
+		this.mode |= S_IFCHR;
+		this.inode_type = SQUASHFS_CHRDEV_TYPE;
+	}
+
+	this.nlink = sfs.read32();
+	this.data = sfs.read32();
 }
 
 function SquashFSFileInode(sfs) {
@@ -278,6 +295,10 @@ SquashFS.prototype.readInode = function(inode) {
 		return new SquashFSFileInode(this);
 	case SQUASHFS_SYMLINK_TYPE:
 		return new SquashFSSymlinkInode(this);
+	case SQUASHFS_BLKDEV_TYPE:
+		return new SquashFSDeviceInode(this, true);
+	case SQUASHFS_CHRDEV_TYPE:
+		return new SquashFSDeviceInode(this, false);
 	case SQUASHFS_LDIR_TYPE:
 		return new SquashFSLDirInode(this);
 	case SQUASHFS_LREG_TYPE:
