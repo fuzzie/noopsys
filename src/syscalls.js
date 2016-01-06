@@ -171,6 +171,10 @@ function sys_ioctl(proc) {
 	var request = proc.registers[5];
 	var addr = proc.registers[6];
 
+	var fdo = proc.fds[fd];
+	if (!fdo)
+		return -EBADF;
+
 	// mips has 13 size bits, 3 dir bits
 	var nr = request & 0xff;
 	var type = (request >>> 8) & 0xff;
@@ -849,7 +853,7 @@ function sys_fstat64(proc) {
 	return do_stat64_core(proc, fdo.node);
 }
 
-function sys_getdents64(proc) {
+function sys_getdents_core(proc, wide) {
 	var fd = proc.registers[4];
 	var dirp = proc.registers[5];
 	var count = proc.registers[6];
@@ -877,6 +881,7 @@ function sys_getdents64(proc) {
 		var child = children[name];
 		/* dirent: long d_ino, long offset to next (from start of whole thing), long reclen, filename, char zero, char d_type */
 		var neededSize = 19 + (name.length + 1);
+		if (!wide) neededSize = 10 + (name.length + 1);
 		if (count < neededSize) {
 			if (count == 0)
 				return -EINVAL;
@@ -885,18 +890,33 @@ function sys_getdents64(proc) {
 		count = count - neededSize;
 		ret = ret + neededSize;
  		// XXX
-		proc.write32(dirp, child.inode); // d_ino
-		proc.write32(dirp + 4, 0); // d_ino (high bits)
-		proc.write32(dirp + 8, ret); // d_off (to next)
-		proc.write32(dirp + 12, ret); // d_off (high bits)
-		proc.write16(dirp + 16, neededSize);
-		proc.write8(dirp + 18, 0); // d_type (DT_UNKNOWN, XXX)
-		proc.copyToUser(dirp + 19, name, true);
+		if (wide) {
+			proc.write32(dirp, child.inode); // d_ino
+			proc.write32(dirp + 4, 0); // d_ino (high bits)
+			proc.write32(dirp + 8, ret); // d_off (to next)
+			proc.write32(dirp + 12, ret); // d_off (high bits)
+			proc.write16(dirp + 16, neededSize);
+			proc.write8(dirp + 18, 0); // d_type (DT_UNKNOWN, XXX)
+			proc.copyToUser(dirp + 19, name, true);
+		} else {
+			proc.write32(dirp, child.inode); // d_ino
+			proc.write32(dirp + 4, ret); // d_off (to next)
+			proc.write16(dirp + 8, neededSize);
+			proc.copyToUser(dirp + 10, name, true);
+		}
 		dirp = dirp + neededSize;
 	}
 
 	// FIXME: return #bytes, or 0 on EOF
 	return ret;
+}
+
+function sys_getdents(proc) {
+	return sys_getdents_core(proc, false);
+}
+
+function sys_getdents64(proc) {
+	return sys_getdents_core(proc, true);
 }
 
 function sys_fcntl64(proc) {
@@ -1423,7 +1443,7 @@ var syscalls = {
 // 4138: sys_setfsuid,
 // 4139: sys_setfsgid,
 4140: sys__llseek,
-// 4141: sys_getdents,
+4141: sys_getdents,
 // 4142: sys__newselect,
 // 4143: sys_flock,
 // 4144: sys_msync,
