@@ -571,8 +571,10 @@ if (typeof window == 'undefined') {
 
 		var syscallnr = this.registers[2];
 
-		if (!syscalls[syscallnr])
-			throw Error("syscall " + syscallnr + " not implemented");
+		if (!syscalls[syscallnr]) {
+			console.log("syscall " + syscallnr + " not implemented");
+			return -ENOSYS;
+		}
 		if (showSystemCalls)
 			console.log("pid " + this.pid + ": syscall " + syscallnr + " (" + syscalls[syscallnr].name + ")");
 
