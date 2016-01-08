@@ -6,8 +6,12 @@ function sys_sysinfo(proc) {
 	proc.write32(buf + 4, 0); // 1-minute load avg
 	proc.write32(buf + 8, 0); // 5-minute load avg
 	proc.write32(buf + 12, 0); // 15-minute load avg
-	proc.write32(buf + 16, 0); // totalram
-	proc.write32(buf + 20, 0); // freeram
+	proc.write32(buf + 16, memSize); // totalram
+	var pagesInUse = 0;
+	for (var n = 0; n < totalPages; ++n)
+		if (pageRefCounts[n])
+			pagesInUse++;
+	proc.write32(buf + 20, memSize - pagesInUse*65536); // freeram
 	proc.write32(buf + 24, 0); // sharedram
 	proc.write32(buf + 28, 0); // bufferram
 	proc.write32(buf + 32, 0); // totalswap
@@ -1012,7 +1016,8 @@ function sys_waitpid(proc) {
 				proc.write32(status, statusvar);
 			p.exitCode = 'x'; // XXX hack :(
 			return p.pid;
-		}
+		} else if (p.exited)
+			continue;
 
 		if ((options & WNOHANG) != WNOHANG)
 			p.exitCallbacks.push(function() { proc.running = true; wakeup(); });
@@ -1052,6 +1057,11 @@ function sys_kill(proc) {
 	// FIXME
 	var pid = proc.registers[4];
 	var sig = proc.registers[5];
+
+	var target = processes[pid-1];
+	if (!target || target.exited)
+		return -ESRCH;
+
 	return 0;
 }
 
@@ -1101,7 +1111,7 @@ function sys_gettimeofday(proc) {
 	var tz = proc.registers[5];
 	var d = new Date();
 	// seconds
-	proc.write32(tv, d.getTime() / 1000.0);
+	proc.write32(tv, (d.getTime() / 1000)|0);
 	// milliseconds
 	proc.write32(tv + 4, 1000 * (d.getTime() % 1000));
 	// FIXME
@@ -1183,8 +1193,15 @@ function sys_sigaltstack(proc) {
 }
 
 function sys_time(proc) {
-	// FIXME
-	return 0;
+	var t = proc.registers[4];
+
+	var d = new Date();
+	var seconds = (d.getTime() / 1000)|0;
+	// seconds
+	if (t)
+		proc.write32(t, seconds);
+
+	return seconds;
 }
 
 function sys_socket(proc) {
@@ -1209,7 +1226,7 @@ function sys_clone(proc) {
 	var newProcess = new Process();
 	newProcess.ppid = proc.pid;
 	processes.push(newProcess);
-	newProcess.pid = processes.length + 1;
+	newProcess.pid = processes.length;
 	newProcess.cloneFrom(proc);
 
 	if (flags & CLONE_CHILD_CLEARTID) {
