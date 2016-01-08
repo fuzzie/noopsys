@@ -78,6 +78,8 @@ function SquashFS(inputdata) {
 	this.root.children = this.root.readEntries();
 	this.root.children['.'] = this.root;
 	this.root.children['..'] = this.root;
+
+	this.mode = 365 | S_IFDIR;
 }
 
 function SquashFSInode(sfs) {

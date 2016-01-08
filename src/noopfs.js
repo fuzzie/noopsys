@@ -315,7 +315,7 @@ function procFSRoot(parent) {
 }
 
 procFSRoot.prototype.getChildren = function() {
-	children = {};
+	var children = {};
 	children['.'] = this;
 	children['..'] = this.parent;
 
@@ -344,7 +344,7 @@ function procFSProcess(parent, pid) {
 }
 
 procFSProcess.prototype.getChildren = function() {
-	children = {};
+	var children = {};
 	children['.'] = this;
 	children['..'] = this.parent;
 
@@ -384,9 +384,13 @@ var fsRoot = new memFSNode(fsData, null);
 fsRoot.parent = fsRoot;
 fsRoot.populateFromData(fsData);
 
-// XXX: think about mounting?
-fsRoot.children['proc'] = new procFSRoot(fsRoot);
-fsRoot.children['proc'].mode = 365 | S_IFDIR;
+var mountProc = function() {
+	// XXX: think about mounting?
+	fsRoot.getChildren();
+	fsRoot.children['proc'] = new procFSRoot(fsRoot);
+	fsRoot.children['proc'].mode = 365 | S_IFDIR;
+}
+mountProc();
 
 var getNodeForAbsPath = function(path, stopOnLinks) {
 	var numLinks = 0; // XXX: think about stopOnLinks

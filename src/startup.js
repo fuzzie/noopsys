@@ -50,6 +50,8 @@ function wakeup() {
 }
 
 function emuStart() {
+	mountProc();
+
 	var args = ["/bin/busybox", "sh"];
 	if (typeof window == 'undefined') {
 		args = process.argv.slice(2);

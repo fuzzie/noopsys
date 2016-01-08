@@ -653,7 +653,17 @@ function sys_open(proc) {
 	if (flags & O_APPEND)
 		throw Error("O_APPEND"); // FIXME
 
-	proc.fds.push(new memFSBackedFile(node));
+	var file = null;
+	if (node.mode & S_IFREG) {
+		file = new memFSBackedFile(node);
+	} else if (node.mode & S_IFDIR) {
+		file = new memFSBackedFile(node); // FIXME: wha
+	} else {
+		return -ENODEV;
+	}
+
+	proc.fds.push(file);
+
 	var fd = proc.fds.length-1;
 	return fd;
 }
