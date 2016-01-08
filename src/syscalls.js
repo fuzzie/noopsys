@@ -523,33 +523,49 @@ function sys_write(proc) {
 function sys_poll(proc) {
 	var fds = proc.registers[4];
 	var nfds = proc.registers[5];
-	var timeout_ts = proc.registers[6];
+	var timeout = proc.registers[6];
 	var sigmask = proc.registers[7];
 	var ret = 0;
 
 	for (var n = 0; n < nfds; ++n) {
 		var fd = proc.read32(fds + 8*n);
 
-		var revents = POLLNVAL;
+		var revents = 0;
 		if (proc.fds[fd]) {
-			revents = 0;
-
 			// Note: Linux's ppoll/poll only return POLLIN/POLLRDNORM
 			// and POLLOUT/POLLRDNORM.
 			// TODO: Should we set the RD ones too?
 			var events = proc.read16(fds + 8*n + 4);
 
 			// FIXME: :-)
-			if ((events & POLLIN) == POLLIN)
-				revents |= POLLIN;
+			if ((events & POLLIN) == POLLIN) {
+				// The read() will add a wakeup call, we don't mind.
+				if (proc.fds[fd].read(proc, 1) > 0)
+					revents |= POLLIN;
+			}
 			if ((events & POLLOUT) == POLLOUT)
 				revents |= POLLOUT;
+		} else if (fd >= 0) {
+			if ((events & POLLOUT) == POLLOUT)
+				revents |= POLLNVAL;
 		}
 
 		proc.write16(fds + 8*n + 6, revents);
 		if (revents)
 			ret++;
 	}
+
+	if (ret == 0 && timeout) {
+		if (timeout > 0) {
+			// FIXME: we shouldn't wake on timeout once aother wakeup happened
+			setTimeout(function() { proc.running = true; wakeup(); }, timeout);
+		}
+
+		return -EAGAIN;
+	}
+
+	// One of the read() calls above might have slept the process, revert that.
+	process.running = true;
 
 	return ret;
 }

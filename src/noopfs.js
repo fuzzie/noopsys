@@ -106,6 +106,9 @@ StreamBackedFile = function(read, write) {
 			tthis.readStream.emit('readable');
 		});
 	}
+
+	// XXX: And another hack because listeners are hard.
+	tthis.waiting = false;
 }
 
 StreamBackedFile.prototype.read = function(process, size) {
@@ -134,13 +137,17 @@ StreamBackedFile.prototype.read = function(process, size) {
 		return this.data.length;
 
 	// Resume the process once data is available.
-	var tthis = this;
-	this.readStream.once('readable', function() {
-		process.running = true;
-		wakeup();
-	});
+	if (!this.waiting) {
+		var tthis = this;
+		this.readStream.once('readable', function() {
+			tthis.waiting = false; // XXX: hack to avoid piling on listeners forever
+			process.running = true;
+			wakeup();
+		});
+	}
 
 	// Block until then.
+	this.waiting = true;
 	process.running = false;
 	return -EAGAIN;
 } 
