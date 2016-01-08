@@ -3,12 +3,6 @@ var S_ISLNK = function(m) { return (m & S_IFLNK) == S_IFLNK; }
 var S_ISREG = function(m) { return (m & S_IFREG) == S_IFREG; }
 var S_ISDIR = function(m) { return (m & S_IFDIR) == S_IFDIR; }
 
-function TTY() {
-}
-
-TTY.prototype.ioctl = function(nr, type, size, dir, addr) {
-};
-
 // XXX: ugh, rethink this design
 function PipeWriter() {
 	this.readCallbacks = [];
@@ -90,6 +84,8 @@ var terminalObj = null;
 var TerminalBackedFile = null;
 
 if (typeof window == 'undefined') {
+
+var globalTTY = new TTY(); // XXX: hack
 
 /* for node.js use,  */
 StreamBackedFile = function(read, write) {

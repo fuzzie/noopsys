@@ -183,44 +183,43 @@ function sys_ioctl(proc) {
 
 	switch (type) {
 	case 0x54: // 'T'
+		if (!(fdo instanceof TTY))
+			return -ENOTTY;
+
 		switch (nr) {
 		case 0xd:
-			// FIXME: don't hardcode random stuff
-			var c_iflag = 0x0;
-			var c_oflag = ONLCR | OPOST;
-			var c_cflag = 0x0;
-			var c_lflag = 0x2 | 0x8; // ICANON, IECHO
-			var c_line = 0;
-
-			proc.write32(addr, c_iflag);
-			proc.write32(addr + 4, c_oflag);
-			proc.write32(addr + 8, c_cflag);
-			proc.write32(addr + 12, c_lflag);
+			// TCGETS
+			proc.write32(addr, fdo.c_iflag);
+			proc.write32(addr + 4, fdo.c_oflag);
+			proc.write32(addr + 8, fdo.c_cflag);
+			proc.write32(addr + 12, fdo.c_lflag);
 			addr += 16;
-			proc.write8(addr++, c_line);
-			proc.write8(addr++, 3); // VINTR
-			proc.write8(addr++, 28); // VQUIT
-			proc.write8(addr++, 127); // VERASE
-			proc.write8(addr++, 21); // VKILL
-			proc.write8(addr++, 0); // VMIN
-			proc.write8(addr++, 0); // VTIME
-			proc.write8(addr++, 0); // VEOL2
-			proc.write8(addr++, 0); // VSWTC
-			proc.write8(addr++, 17); // VSTART
-			proc.write8(addr++, 19); // VSTOP
-			proc.write8(addr++, 26); // VSUSP
-			proc.write8(addr++, 25); // VDSUSP
-			proc.write8(addr++, 18); // VREPRINT
-			proc.write8(addr++, 15); // VDISCARD
-			proc.write8(addr++, 23); // VWERASE
-			proc.write8(addr++, 22); // VLNEXT
-			proc.write8(addr++, 4); // VEOF
-			proc.write8(addr++, 0); // VEOL
-			// don't care at all about the last 4
+			proc.write8(addr++, fdo.c_line);
+			for (var n = 0; n < NCCS; ++n)
+				proc.write8(addr++, fdo.c_cc[n]);
 			return 0;
-		case 0xe:
-			// TCSETS
-			// FIXME
+		case 0xe: // TCSETS (TCSANOW)
+		case 0xf: // TCSETW (TCSADRAIN) <- FIXME
+		case 0x10: // TCSETF (TCSAFLUSH) <- FIXME
+			fdo.c_iflag = proc.read32(addr);
+			fdo.c_oflag = proc.read32(addr+4);
+			fdo.c_cflag = proc.read32(addr+8);
+			fdo.c_lflag = proc.read32(addr+12);
+			// fdo.c_line = proc.read8(addr+16); TODO: how to handle this?
+			for (var n = 0; n < NCCS; ++n)
+				fdo.c_cc[n] = proc.read8(addr+17+n);
+			fdo.set_termios();
+			return 0;
+		case 0x80: // TIOCSCTTY
+			// FIXME: implement
+			return 0;
+		}
+		break;
+	case 0x56: // 'V' (console)
+		switch (nr) {
+		case 0: // VT_OPENQRY
+			// FIXME: hack
+			proc.write32(addr, 1);
 			return 0;
 		}
 		break;
@@ -229,7 +228,9 @@ function sys_ioctl(proc) {
 		case 104:
 			// TIOCGWINSZ
 			// FIXME
-			return -ENOTTY;
+			proc.write32(addr, 25); // ws_row
+			proc.write32(addr+4, 80); // ws_col
+			return 0;
 		case 118:
 			// TIOCSPGRP
 			// FIXME

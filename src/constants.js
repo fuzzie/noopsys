@@ -211,6 +211,7 @@ var OFILL = 0x40;
 var OFDEL = 0x80;
 var NLDLY = 0x100;
 var TABDLY = 0x1800;
+var XTABS = 0x1800;
 var CBAUD = 0x100f;
 var B38400 = 0xf;
 var CSIZE = 0x30;

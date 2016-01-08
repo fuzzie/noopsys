@@ -185,9 +185,12 @@ function Process() {
 	this.fds = [];
 if (typeof window == 'undefined') {
 	// node.js
-	this.fds[0] = new StreamBackedFile(process.stdin, null);
-	this.fds[1] = new StreamBackedFile(null, process.stdout);
-	this.fds[2] = new StreamBackedFile(null, process.stderr);
+	// XXX: shouldn't make them here
+	var mystream = new StreamBackedFile(process.stdin, process.stdout);
+	var mytty = new TTY(mystream, mystream);
+	this.fds[0] = mytty;
+	this.fds[1] = mytty;
+	this.fds[2] = mytty;
 } else {
 	// browser
 	this.fds[0] = new TerminalBackedFile(terminalObj);
