@@ -58,6 +58,9 @@ PipeReader.prototype.read = function(process, size) {
 	if (this.data.length)
 		return this.data.length;
 
+	if (!process)
+		return -EINVAL;
+
 	// Resume the process once data is available.
 	this.src.readCallbacks.push(function() {
 		process.running = true;
@@ -80,12 +83,12 @@ PipeReader.prototype.close = function() {
 // nodejs
 var StreamBackedFile = null;
 // browser
-var terminalObj = null;
 var TerminalBackedFile = null;
 
-if (typeof window == 'undefined') {
+var termstream;
+var termTTY;
 
-var globalTTY = new TTY(); // XXX: hack
+if (typeof window == 'undefined') {
 
 /* for node.js use,  */
 StreamBackedFile = function(read, write) {
@@ -136,6 +139,9 @@ StreamBackedFile.prototype.read = function(process, size) {
 	if (this.data.length)
 		return this.data.length;
 
+	if (!process)
+		return -EINVAL;
+
 	// Resume the process once data is available.
 	if (!this.waiting) {
 		var tthis = this;
@@ -168,11 +174,15 @@ StreamBackedFile.prototype.clone = function() {
 StreamBackedFile.prototype.close = function() {
 }
 
+termstream = new StreamBackedFile(process.stdin, process.stdout);
+termTTY = new TTY(termstream, termstream);
+
 } else {
 	// browser
 
 	TerminalBackedFile = function(term) {
 		this.term = term;
+		this.readStream = term; // FIXME: for tty
 		this.data = [];
 
 		var tthis = this;
@@ -190,6 +200,9 @@ StreamBackedFile.prototype.close = function() {
 		// We're a terminal, so return any data we have.
 		if (this.data.length)
 			return this.data.length;
+
+		if (!process)
+			return -EINVAL;
 
 		// Resume the process once data is available.
 		this.term.once('data', function(chunk) {
@@ -252,6 +265,15 @@ memFSBackedFile.prototype.write = function(proc, data) {
 		// Write before end (at least partially overwriting the existing data).
 		if (this.pos + data.length > this.node.size)
 			this.node.size = this.pos + data.length;
+		if (this.node.data instanceof ArrayBuffer) {
+			// XXX: ugh
+			// Convert to a string.
+			var str = "";
+			var tmp = new Uint8Array(this.node.data);
+			for (var n = 0; n < this.node.data.byteLength; ++n)
+				str = str + String.fromCharCode(tmp[n]);
+			this.node.data = str;
+		}
 		this.node.data = this.node.data.slice(0, this.pos) + data + this.node.data.slice(this.pos + data.length);
 	} else {
 		// Write at end. We hope.

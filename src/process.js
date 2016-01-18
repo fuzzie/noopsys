@@ -97,6 +97,15 @@ function freePage(pageno) {
 		throw Error("zero page ended up unreferenced?");
 }
 
+// At the time of writing, the MIPS/Linux "vdso" is just a page containing two
+// trampolines (sigreturn and rt_sigreturn), not exposed to userspace. We do the
+// same thing.
+var vdsoPage = allocatePage(PROT_READ | PROT_EXEC);
+mem32[(vdsoPage << 14) + 0] = 0x20021017; // li sigreturn
+mem32[(vdsoPage << 14) + 4] = 0x0000000c; // syscall
+mem32[(vdsoPage << 14) + 8] = 0x20021061; // li rt_sigreturn
+mem32[(vdsoPage << 14) + 12] = 0x0000000c; // syscall
+
 // MIPS has 32 normal and 32 fp registers.
 const STATE_PC = 64;
 const STATE_PENDINGBRANCH = 65;
@@ -108,6 +117,23 @@ const STATE_COPY_COUNT = 68; // state copied in clone()
 // pointers into memory
 const STATE_PAGEMAP = 68;
 const STATE_PAGEFLAGS = 69;
+
+// this is ~= signal_struct
+function ProcessInfo() {
+	this.flags = 0;
+	this.leader = false; // is *session* leader
+	this.tty = null; // controlling tty
+}
+
+// ProcessInfo.flags (see sched.h)
+var SIGNAL_STOP_STOPPED = 1;
+var SIGNAL_STOP_CONTINUED = 2;
+var SIGNAL_GROUP_EXIT = 4;
+// TODO: do we care about these?
+var SIGNAL_CLD_STOPPED = 0x10;
+var SIGNAL_CLD_CONTINUED = 0x20;
+
+var vdsoMappedAt = 0xe0000;
 
 function Process() {
 	// note: buffers always initialized to zero
@@ -176,27 +202,174 @@ function Process() {
 			this.pagemap[n] = 0;
 			this.pageflags[n] = 0;
 		}
+
+		pageRefCounts[vdsoPage]++;
+		this.pagemap[vdsoMappedAt >> 16] = vdsoPage;
+		this.pageflags[vdsoMappedAt >> 16] = PROT_READ | PROT_EXEC;
+
+		for (var n = 0; n < _NSIG; ++n) {
+			this.signalactions[n] = new Object();
+			this.signalactions[n].sa_handler = SIG_DFL;
+			this.signalactions[n].sa_flags = 0;
+			this.signalactions[n].sa_mask = 0;
+		}
+
+		this.pinfo = new ProcessInfo();
 	}
 
+	this.signalactions = new Array(_NSIG);
+	this.signalQueue = [];
+
 	this.initMemory();
+
+	this.isFatalSignal = function(signo) {
+		return (!isStopSignal(signo) && !isIgnoredSignal(signo) && this.signalactions[signo-1].sa_handler == SIG_DFL);
+	}
+
+	function isIgnoredSignal(signo) {
+		return (signo == SIGCONT) || (signo == SIGCHLD) || (signo == SIGWINCH) || (signo == SIGURG);
+	}
+
+	function isStopSignal(signo) {
+		return (signo == SIGSTOP) || (signo == SIGTSTP) || (signo == SIGTTIN) || (signo == SIGTTOU);
+	}
+
+	// TODO: this doesn't deal with threads
+	this.sendSignal = function(signo, info) {
+		// prepare
+		if (isStopSignal(signo)) {
+			// FIXME: remove all SIGCONT
+		} else if (signo == SIGCONT) {
+			// FIXME: remove all stop signals, do wake up stuff
+		}
+
+		// drop duplicate non-rt signals
+		if (signo < SIGRTMIN) {
+			for (var n = 0; n < this.signalQueue.length; ++n) {
+				if (this.signalQueue[n].si_signo == signo)
+					return;
+			}
+		}
+
+		// queue (if not SIGSTOP/SIGKILL)
+		// FIXME: we should use the provided info?
+		var siginfo = new Object();
+		siginfo.si_signo = signo;
+		// FIXME
+		this.signalQueue.push(siginfo);
+
+		// FIXME: signalfd_notify
+
+		// complete
+		if (this.isFatalSignal(signo)) {
+			// FIXME: do a group exit with signo as exit code
+			this.exitCode = signo;
+			this.running = false;
+			this.exited = true;
+			return;
+		}
+
+		// wake up
+		this.running = true;
+		wakeup();
+	}
+
+	this.handleSignal = function() {
+		var siginfo = this.signalQueue.shift();
+
+		// FIXME: child stuff from get_signal?
+
+		var action = this.signalactions[siginfo.si_signo-1];
+		// FIXME: dequeue_signal stuff
+
+		if (action.sa_handler == SIG_IGN)
+			return;
+		if (action.sa_handler != SIG_DFL) {
+			this.setupFrameForSignal((action.sa_flags & SA_SIGINFO), siginfo);
+
+			if (action.sa_flags & SA_ONESHOT)
+				action.sa_handler = SIG_DFL;
+
+			return;
+		}
+
+		if (isIgnoredSignal)
+			return;
+
+		// init doesn't get signals.
+		if (this.pid == 1)
+			return;
+
+		if (isStopSignal(siginfo.si_signo)) {
+			// FIXME
+
+			return;
+		}
+
+		// fatal signal
+		// FIXME
+		//console.log("TODO: fatal signal");
+	}
+
+	this.setupFrameForSignal = function(is_rt, siginfo) {
+		var action = this.signalactions[siginfo.si_signo-1];
+
+		var sp = this.registers[29];
+		sp = sp - STATE_COPY_COUNT * 4;
+		for (var n = 0; n < STATE_COPY_COUNT; ++n)
+			this.write32(sp + n*4, this.registers[n]);
+		// FIXME: altstack
+		// FIXME: save altstack
+		// FIXME: sigmask
+		// FIXME: anything else :)
+
+		this.registers[4] = siginfo.si_signo;
+		this.registers[29] = sp;
+
+		// FIXME: registers[5] contains rs_info for rt
+		// FIXME: registers[6] contains rs_uc (rt) or sf_sc
+		if (is_rt) {
+			this.registers[5] = 0; // FIXME
+			// sig_return
+			this.registers[31] = vdsoMappedAt + 8;
+		} else {
+			this.registers[5] = 0;
+			// sig_return
+			this.registers[31] = vdsoMappedAt + 0;
+		}
+
+		this.registers[25] = action.sa_handler;
+		this.registers[STATE_PC] = action.sa_handler;
+		this.registers[STATE_PENDINGBRANCH] = 0;
+	}
+
+	this.popFrameAfterSignal = function(is_rt) {
+		var sp = this.registers[29];
+		for (var n = 0; n < STATE_COPY_COUNT; ++n)
+			this.registers[n] = this.read32(sp + n*4);
+
+		// FIXME: other stuff
+	}
+
+	this.exit_notify = function() {
+		// FIXME: forget_original_parent
+		// FIXME: reparent children to init
+
+		// FIXME: kill_orphaned_pgrp (SIGHUP/SIGCONT to pgrp)
+
+		// FIXME: notify parent if thread group leader
+		// XXX: !!!
+		if (this.ppid)
+			processes[this.ppid-1].sendSignal(SIGCHLD, null);
+	}
 
 	this.exitCallbacks = [];
 
 	this.fds = [];
-if (typeof window == 'undefined') {
-	// node.js
 	// XXX: shouldn't make them here
-	var mystream = new StreamBackedFile(process.stdin, process.stdout);
-	var mytty = new TTY(mystream, mystream);
-	this.fds[0] = mytty;
-	this.fds[1] = mytty;
-	this.fds[2] = mytty;
-} else {
-	// browser
-	this.fds[0] = new TerminalBackedFile(terminalObj);
-	this.fds[1] = this.fds[0];
-	this.fds[2] = this.fds[0];
-}
+	this.fds[0] = termTTY;
+	this.fds[1] = termTTY;
+	this.fds[2] = termTTY;
 
 	this.running = true;
 	this.exited = false;
@@ -209,6 +382,10 @@ if (typeof window == 'undefined') {
 	this.euid = 0;
 	this.gid = 0;
 	this.egid = 0;
+
+	// FIXME: also these..
+	this.pgid = 1;
+	this.sid = 1;
 
 	this.cwd = "/";
 
@@ -249,6 +426,15 @@ if (typeof window == 'undefined') {
 			else
 				this.fds.push(null);
 		}
+
+		for (var n = 0; n < _NSIG; ++n) {
+			this.signalactions[n].sa_handler = source.signalactions[n].sa_handler;
+			this.signalactions[n].sa_flags = source.signalactions[n].sa_flags;
+			this.signalactions[n].sa_mask = source.signalactions[n].sa_mask;
+		}
+
+		// FIXME: this.pinfo
+		this.pinfo.tty = source.pinfo.tty;
 
 		// TODO: ids
 	}
@@ -582,17 +768,22 @@ if (typeof window == 'undefined') {
 		if (showSystemCalls)
 			console.log("returned " + ret);
 
-		if (!this.running)
-			return;
-
-		// return value in v0, error flag in a3 (see kernel/scall32-o32.S)
-		if ((ret >> 0) < 0) {
-			this.registers[2] = -ret;
-			this.registers[7] = 1;
-		} else {
-			this.registers[2] = ret;
-			this.registers[7] = 0;
+		if (this.running) {
+			// return value in v0, error flag in a3 (see kernel/scall32-o32.S)
+			if ((ret >> 0) < 0) {
+				this.registers[2] = -ret;
+				this.registers[7] = 1;
+			} else {
+				this.registers[2] = ret;
+				this.registers[7] = 0;
+			}
 		}
+
+		// TODO: We don't do this here if we're not running
+		// because we want to preserve oldpc for the system
+		// call restart. We should redesign this a bit.
+		if (this.signalQueue.length && this.running)
+			this.handleSignal();
 	};
 
 	this.translate = function(addr, prot) {
@@ -913,6 +1104,10 @@ if (typeof window == 'undefined') {
 	}
 
 	this.runInstLoop = function(maxInsts) {
+		// FIXME: think about this
+		while (this.signalQueue.length)
+			this.handleSignal();
+
 		var registers = this.registers;
 
 		var oldpc = 0;

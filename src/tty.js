@@ -4,6 +4,14 @@ function TTY(reads, writes) {
 	this.readStream = reads;
 	this.writeStream = writes;
 
+	// TODO: if we implement multiple TTYs we might need to remove this?
+	var tthis = this;
+	// FIXME: broken for non-nodejs-hack cases
+	this.readStream.readStream.on('readable', function() { tthis.update(); });
+
+	this.session = 0;
+	this.pgrp = 0;
+
 	// termios
 	this.c_iflag = ICRNL | IXON;
 	this.c_oflag = OPOST | ONLCR;
@@ -63,6 +71,14 @@ TTY.prototype.queue = function(c) {
 	this.data.push(c);
 }
 
+TTY.prototype.update = function() {
+	this.readStream.read(null, 1);
+	for (var n = 0; n < this.readStream.data.length; ++n) {
+		this.receive_char(this.readStream.data[n]);
+	}
+	this.readStream.data = this.readStream.data.slice(0, 0);
+}
+
 TTY.prototype.read = function(process, size) {
 	// FIXME: This is wrong.
 	if (this.data.length)
@@ -73,10 +89,7 @@ TTY.prototype.read = function(process, size) {
 	if (ret == -EAGAIN)
 		return ret;
 
-	for (var n = 0; n < this.readStream.data.length; ++n) {
-		this.receive_char(this.readStream.data[n]);
-	}
-	this.readStream.data = this.readStream.data.slice(0, 0);
+	this.update();
 
 	// FIXME: Also :)
 	if (this.data.length > size)
@@ -160,6 +173,12 @@ TTY.prototype.receive_char = function(c) {
 	this.receive_char_special(c);
 }
 
+TTY.prototype.isig = function(signo) {
+	// FIXME: send to whole pgrp
+	// FIXME: sanity check
+	processes[this.pgrp-1].sendSignal(signo, null);
+}
+
 // Pretty much straight from n_tty.c.
 TTY.prototype.receive_char_special = function(c) {
 	if (this.c_iflag & IXON) {
@@ -174,13 +193,13 @@ TTY.prototype.receive_char_special = function(c) {
 
 	if (this.c_lflag & ISIG) {
 		if (c == this.c_cc[VINTR]) {
-			console.log("TODO: SIGINT"); // FIXME: SIGINT
+			this.isig(SIGINT);
 			return;
 		} else if (c == this.c_cc[VQUIT]) {
-			console.log("TODO: SIGQUIT"); // FIXME: SIGQUIT
+			this.isig(SIGQUIT);
 			return;
 		} else if (c == this.c_cc[VSUSP]) {
-			console.log("TODO: SIGTSTP"); // FIXME: SIGTSTP
+			this.isig(SIGTSTP);
 			return;
 		}
 	}

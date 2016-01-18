@@ -11,7 +11,7 @@ function myLoop() {
 	var busy = false;
 	for (var i = 0; i < processes.length; ++i) {
 		var p = processes[i];
-		if (p.exited)
+		if (p.exited && p.pagemapPage == 0)
 			continue;
 		currentProcessId = i;
 		var ticks = 0;
@@ -26,6 +26,7 @@ function myLoop() {
 			p.closeFds();
 			for (var n = 0; n < p.exitCallbacks.length; ++n)
 				p.exitCallbacks[n]();
+			p.exit_notify();
 			if (i == 0) {
 				console.log("done (" + p.exitCode + "), ran " + instCount + " instructions");
 				printk("System halted.\n");
@@ -65,6 +66,12 @@ function emuStart() {
 	var p = new Process();
 	processes.push(p);
 
+	// FIXME: is this right?
+	p.pinfo.leader = true;
+	p.pinfo.tty = termTTY;
+	termTTY.pgrp = p.pid;
+	termTTY.session = p.pid;
+
 	var env = ["TERM=xterm"];
 	p.loadElf(binary, args, env);
 	myLoop();
@@ -79,7 +86,7 @@ var printk = function(str) {
 	if (typeof window ==='undefined') {
 		process.stdout.write(line);
 	} else {
-		terminalObj.write(line);
+		termstream.write(null, line);
 	}
 }
 
@@ -98,7 +105,8 @@ if (typeof window == 'undefined') {
 	emuStart();
 } else {
 	goEmulatorGo = function(term) {
-		terminalObj = term;
+		termstream = new TerminalBackedFile(term);
+		termTTY = new TTY(termstream, termstream);
 
 		localforage.getItem('rootfs', function(err, value) {
 			if (value) {

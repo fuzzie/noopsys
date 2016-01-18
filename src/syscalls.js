@@ -88,7 +88,15 @@ function sys_gettid(proc) {
 }
 
 function sys_setpgid(proc) {
+	var pid = proc.registers[4];
+	var pgid = proc.registers[5];
+
 	// FIXME
+	if (pid == 0)
+		proc.pgid = pgid;
+	else
+		processes[pid-1].pgid = pgid;
+
 	return 0;
 }
 
@@ -98,12 +106,22 @@ function sys_getppid(proc) {
 
 function sys_getpgrp(proc) {
 	// FIXME
-	return proc.pid;
+	return proc.pgid;
 }
 
 function sys_setsid(proc) {
-	// FIXME
-	return proc.pid;
+	// already session leader --> fail
+	if (proc.pinfo.leader)
+		return -EPERM;
+
+	// FIXME: also fail if a process group already exists
+
+	proc.pinfo.leader = true;
+	proc.pinfo.tty = null;
+	proc.sid = proc.pid;
+	proc.pgid = proc.pid;
+
+	return 0;
 }
 
 function sys_geteuid(proc) {
@@ -215,7 +233,16 @@ function sys_ioctl(proc) {
 			fdo.set_termios();
 			return 0;
 		case 0x80: // TIOCSCTTY
-			// FIXME: implement
+			if (!proc.pinfo.leader || proc.pinfo.tty)
+				return -EPERM;
+			if (fdo.session) {
+				// FIXME
+				return -EPERM;
+			}
+			// TODO: think about this
+			fdo.pgrp = proc.pgrp;
+			fdo.session = proc.sid;
+			proc.pinfo.tty = fdo;
 			return 0;
 		}
 		break;
@@ -228,6 +255,9 @@ function sys_ioctl(proc) {
 		}
 		break;
 	case 0x74: // 't'
+		if (!(fdo instanceof TTY))
+			return -ENOTTY;
+
 		switch (nr) {
 		case 104:
 			// TIOCGWINSZ
@@ -237,12 +267,17 @@ function sys_ioctl(proc) {
 			return 0;
 		case 118:
 			// TIOCSPGRP
-			// FIXME
+			// TODO: master pty stuff here also..?
+			if (proc.pinfo.tty != fdo || fdo.session != proc.sid)
+				return -ENOTTY;
+			var pgrp = proc.read32(addr);
+			// FIXME: check that the pgrp is ok
+			fdo.pgrp = pgrp;
 			return 0;
 		case 119:
 			// TIOCGPGRP
-			// FIXME: hack
-			proc.write32(addr, proc.pid);
+			// FIXME: check for master pty
+			proc.write32(addr, fdo.pgrp);
 			return 0;
 		}
 		break;
@@ -1177,10 +1212,29 @@ function sys_getpeername(proc) {
 }
 
 function sys_rt_sigaction(proc) {
-	/*console.log("rt_sigaction " + proc.registers[4].toString(16));
-	console.log("rt_sigaction " + proc.registers[5].toString(16));
-	console.log("rt_sigaction " + proc.registers[6].toString(16));*/
-	// FIXME
+	var signum = proc.registers[4];
+	var act = proc.registers[5];
+	var oldact = proc.registers[6];
+
+	if (signum < 1 || signum > _NSIG)
+		return -EINVAL;
+
+	var action = proc.signalactions[signum-1];
+
+	if (oldact) {
+		proc.write32(oldact, action.sa_flags);
+		proc.write32(oldact+4, action.sa_handler);
+		proc.write32(oldact+8, action.sa_mask);
+	}
+
+	if (act) {
+		action.sa_flags = proc.read32(act);
+		action.sa_handler = proc.read32(act+4);
+		action.sa_mask = proc.read32(act+8);
+
+		// FIXME: discard pending signals in some circumstances (see do_sigaction)
+	}
+
 	return 0;
 }
 
@@ -1227,6 +1281,11 @@ function sys_clone(proc) {
 
 	var newProcess = new Process();
 	newProcess.ppid = proc.pid;
+
+	// TODO: think abut this
+	newProcess.pgid = proc.pgid;
+	newProcess.sid = proc.sid;
+
 	processes.push(newProcess);
 	newProcess.pid = processes.length;
 	newProcess.cloneFrom(proc);
