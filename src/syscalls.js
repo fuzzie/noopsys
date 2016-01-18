@@ -426,6 +426,8 @@ function do_lseek(proc, fd, offset, whence) {
 		return -EBADF;
 	}
 	var file = proc.fds[fd];
+	if (!file.node)
+		return -ESPIPE;
 
 	var newOffset = file.pos;
 	// FIXME
@@ -569,7 +571,7 @@ function sys_poll(proc) {
 	}
 
 	// One of the read() calls above might have slept the process, revert that.
-	process.running = true;
+	proc.running = true;
 
 	return ret;
 }
